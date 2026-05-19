@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Upload, ShieldAlert, CheckCircle, ArrowRight, Loader2, Bot } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -11,7 +11,37 @@ function Dashboard() {
   const [statusMessage, setStatusMessage] = useState("");
   const [progress, setProgress] = useState(0);
   const [results, setResults] = useState(null);
+  const [history, setHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(true);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    const fetchHistory = async () => {
+      try {
+        const token = localStorage.getItem('mobaudit_token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const response = await fetch(`http://${window.location.hostname}:5001/api/scans/history`, { headers });
+        if (response.ok) {
+          const data = await response.json();
+          setHistory(data.scans || []);
+        }
+      } catch (err) {
+        console.error("Failed to fetch scan history", err);
+      } finally {
+        setLoadingHistory(false);
+      }
+    };
+    fetchHistory();
+  }, []);
+
+  const formatTimeAgo = (timestamp) => {
+    const minutes = Math.floor((new Date() - new Date(timestamp)) / 60000);
+    if (minutes < 60) return `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
+    const hours = Math.floor(minutes / 60);
+    if (hours < 24) return `${hours} hour${hours !== 1 ? 's' : ''} ago`;
+    const days = Math.floor(hours / 24);
+    return `${days} day${days !== 1 ? 's' : ''} ago`;
+  };
 
   const handleFileChange = (e) => {
     const selectedFile = e.target.files[0];
@@ -46,8 +76,10 @@ function Dashboard() {
         });
       }, 500);
 
+      const token = localStorage.getItem('mobaudit_token');
       const response = await fetch(`http://${window.location.hostname}:5001/api/analyze`, {
         method: "POST",
+        headers: { 'Authorization': `Bearer ${token}` },
         body: formData,
       });
 
@@ -152,6 +184,86 @@ function Dashboard() {
 
         </AnimatePresence>
       </motion.div>
+
+      {/* SCAN HISTORY SECTION */}
+      <div className="w-full max-w-4xl mt-16 px-4">
+        <div className="mb-8 flex flex-col items-center">
+          <h3 className="text-2xl font-display font-bold text-white mb-2">Recent Scans</h3>
+          <p className="text-gray-500 text-sm font-bold tracking-widest uppercase">Click any scan to view its full report</p>
+        </div>
+        
+        {loadingHistory ? (
+          <div className="flex justify-center p-10">
+            <Loader2 className="w-8 h-8 animate-spin text-brand-red opacity-50" />
+          </div>
+        ) : history.length === 0 ? (
+          <div className="bg-brand-secondary/50 border border-brand-border p-10 rounded-2xl text-center text-gray-500 font-bold tracking-widest uppercase text-sm">
+            No scans yet. Upload an APK to get started.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {history.map((scan, idx) => (
+              <motion.div
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: idx * 0.05 }}
+                key={scan.hash}
+                onClick={() => {
+                  localStorage.setItem("lastScanResult", JSON.stringify({ hash: scan.hash }));
+                  navigate("/report");
+                }}
+                className="bg-brand-secondary border border-brand-border p-6 rounded-2xl cursor-pointer hover:border-brand-red/50 transition-colors group flex flex-col"
+              >
+                <div className="flex justify-between items-start mb-4 border-b border-brand-border pb-4">
+                  <div className="flex items-center space-x-3">
+                    <div className="w-10 h-10 bg-brand-red/20 text-brand-red rounded-lg flex items-center justify-center font-display font-bold text-xl uppercase">
+                      {scan.app_name ? scan.app_name.charAt(0) : '?'}
+                    </div>
+                    <div>
+                      <div className="font-bold text-white group-hover:text-brand-red transition-colors line-clamp-1">{scan.app_name || "Unknown App"}</div>
+                      <div className="text-[10px] text-gray-500 font-mono truncate max-w-[150px]">{scan.package || "unknown.package"}</div>
+                    </div>
+                  </div>
+                  
+                  <div className="flex flex-col items-end">
+                    <div className={`text-2xl font-display font-bold ${
+                      scan.risk_level === 'High' ? 'text-brand-red' : 
+                      scan.risk_level === 'Medium' ? 'text-yellow-500' : 'text-green-500'
+                    }`}>{scan.risk_score}</div>
+                    <div className={`text-[8px] font-bold tracking-widest uppercase px-1.5 py-0.5 rounded border ${
+                      scan.risk_level === 'High' ? 'bg-brand-red/10 text-brand-red border-brand-red/20' : 
+                      scan.risk_level === 'Medium' ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' : 'bg-green-500/10 text-green-500 border-green-500/20'
+                    }`}>{scan.risk_level} RISK</div>
+                  </div>
+                </div>
+                
+                <div className="flex justify-between items-center mt-auto pt-2">
+                  <div className="flex space-x-3">
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-gray-500 tracking-widest uppercase">Findings</span>
+                      <span className="text-white font-bold">{scan.total_findings}</span>
+                    </div>
+                    <div className="flex flex-col">
+                      <span className="text-[10px] font-bold text-gray-500 tracking-widest uppercase">Analysis</span>
+                      <span className={`text-[10px] font-bold mt-1 uppercase ${scan.dynamic_status === 'completed' ? 'text-green-500' : 'text-gray-400'}`}>
+                        {scan.dynamic_status === 'completed' ? 'Dynamic Done' : 'Static Only'}
+                      </span>
+                    </div>
+                  </div>
+                  
+                  <button className="opacity-0 group-hover:opacity-100 transition-opacity bg-white/5 hover:bg-white/10 px-3 py-1.5 rounded-lg text-[10px] font-bold tracking-widest text-white uppercase flex items-center">
+                    VIEW REPORT <ArrowRight className="w-3 h-3 ml-1" />
+                  </button>
+                </div>
+                
+                <div className="mt-4 text-[9px] text-gray-600 font-bold tracking-widest uppercase border-t border-white/5 pt-3">
+                  Scanned {formatTimeAgo(scan.scanned_at)}
+                </div>
+              </motion.div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {results && !isScanning && (
         <div className="w-full mt-12 animate-in slide-in-from-bottom duration-700">

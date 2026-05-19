@@ -99,6 +99,47 @@ function SecretCard({ secret, viewCode }) {
   );
 }
 
+const extractText = (value) => {
+  if (!value) return '';
+  
+  // If it's already a clean string without JSON
+  if (typeof value === 'string') {
+    // Remove surrounding quotes if present
+    let cleaned = value.trim();
+    
+    // Try to parse as JSON first
+    try {
+      const parsed = JSON.parse(cleaned);
+      if (typeof parsed === 'string') return parsed;
+      if (parsed.explanation) return parsed.explanation;
+      if (parsed.description) return parsed.description;
+      if (parsed.fix) return parsed.fix;
+      if (parsed.title) return parsed.title;
+      // If it's an object, stringify it nicely
+      return Object.values(parsed).join(' ');
+    } catch {
+      // Not JSON, check if it starts with { which means broken JSON string
+      if (cleaned.startsWith('{') || cleaned.startsWith('"explanation"')) {
+        // Try to extract explanation using regex
+        const expMatch = cleaned.match(/"explanation"\s*:\s*"([^"]+)"/);
+        if (expMatch) return expMatch[1];
+        const fixMatch = cleaned.match(/"fix"\s*:\s*"([^"]+)"/);
+        if (fixMatch) return fixMatch[1];
+      }
+      return cleaned;
+    }
+  }
+  
+  if (typeof value === 'object') {
+    if (value.explanation) return value.explanation;
+    if (value.description) return value.description;
+    if (value.fix) return value.fix;
+    return Object.values(value).filter(v => typeof v === 'string').join(' ');
+  }
+  
+  return String(value);
+};
+
 function Report({ reportData }) {
   const [report, setReport] = useState(null);
   const [riskData, setRiskData] = useState(null);
@@ -112,6 +153,10 @@ function Report({ reportData }) {
   const [aiFixes, setAiFixes] = useState({});
   const [loadingFixId, setLoadingFixId] = useState(null);
   const [error, setError] = useState(null);
+  const [selectedVuln, setSelectedVuln] = useState(null);
+  const [isFixingCode, setIsFixingCode] = useState(false);
+  const [fixError, setFixError] = useState(null);
+  const [mitreData, setMitreData] = useState(null);
   
   // Dynamic Analysis State
   const [dynamicStatus, setDynamicStatus] = useState("not_started"); 
@@ -137,10 +182,13 @@ function Report({ reportData }) {
       }
 
       try {
+        const token = localStorage.getItem('mobaudit_token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+        
         const [reportRes, riskRes, secretsRes] = await Promise.all([
-          fetch(`http://${window.location.hostname}:5001/api/report/${hash}`),
-          fetch(`http://${window.location.hostname}:5001/api/risk-score/${hash}`),
-          fetch(`http://${window.location.hostname}:5001/api/secrets/${hash}`)
+          fetch(`http://${window.location.hostname}:5001/api/report/${hash}`, { headers }),
+          fetch(`http://${window.location.hostname}:5001/api/risk-score/${hash}`, { headers }),
+          fetch(`http://${window.location.hostname}:5001/api/secrets/${hash}`, { headers })
         ]);
         
         if (!reportRes.ok) throw new Error("Failed to fetch report from API");
@@ -156,6 +204,12 @@ function Report({ reportData }) {
         if (secretsRes.ok) {
           const secretsDataJson = await secretsRes.json();
           setSecretsData(secretsDataJson.secrets);
+        }
+
+        const mitreRes = await fetch(`http://${window.location.hostname}:5001/api/mitre-cve/${hash}`, { headers });
+        if (mitreRes.ok) {
+          const mitreJson = await mitreRes.json();
+          setMitreData(mitreJson.mappings);
         }
         
         setError(null);
@@ -180,13 +234,15 @@ function Report({ reportData }) {
       if (!hash) return;
 
       try {
-        const res = await fetch(`http://${window.location.hostname}:5001/api/analyze/dynamic/${hash}/status`);
+        const token = localStorage.getItem('mobaudit_token');
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const res = await fetch(`http://${window.location.hostname}:5001/api/analyze/dynamic/${hash}/status`, { headers });
         if (res.ok) {
           const data = await res.json();
           setDynamicStatus(data.status);
           
           if (data.status === "completed" && report && !report.dynamic) {
-             const repRes = await fetch(`http://${window.location.hostname}:5001/api/report/${hash}`);
+             const repRes = await fetch(`http://${window.location.hostname}:5001/api/report/${hash}`, { headers });
              if (repRes.ok) {
                 const repData = await repRes.json();
                 setReport(repData);
@@ -293,6 +349,56 @@ function Report({ reportData }) {
     }
   };
 
+  const handleAnalyzeVuln = async (vuln, idx) => {
+    setSelectedVuln({ ...vuln, idx });
+    setIsFixingCode(true);
+    setFixError(null);
+    setCode("");
+
+    let hash = reportData?.hash;
+    if (!hash) {
+      const saved = localStorage.getItem("lastScanResult");
+      hash = JSON.parse(saved)?.hash;
+    }
+
+    let fetchedCode = "";
+    try {
+      const response = await fetch(`http://${window.location.hostname}:5001/api/code/${hash}?file=${encodeURIComponent(vuln.file)}`);
+      if (response.ok) {
+        const data = await response.json();
+        fetchedCode = data.code;
+        setCode(fetchedCode);
+      }
+    } catch (err) {
+      console.log("Code fetch failed, will proceed without code diff");
+    }
+
+    try {
+      const response = await fetch(`http://${window.location.hostname}:5001/api/ai/fix-suggestion`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: vuln.title,
+          description: vuln.description,
+          code_snippet: fetchedCode || ""
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to fetch AI fix");
+      }
+      
+      const data = await response.json();
+      setAiFixes(prev => ({ ...prev, [idx]: data }));
+    } catch (err) {
+      console.error("AI Fix error:", err);
+      setFixError(err.message);
+    } finally {
+      setIsFixingCode(false);
+    }
+  };
+
   const downloadReport = (format) => {
     let hash = reportData?.hash;
     if (!hash) {
@@ -382,7 +488,7 @@ function Report({ reportData }) {
              onClick={() => setActiveTab("code")}
              className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "code" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
           >
-            CODE VIEW
+            AI CODE FIXER
             {activeTab === "code" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
           </button>
           <button 
@@ -398,6 +504,13 @@ function Report({ reportData }) {
           >
             DYNAMIC ANALYSIS
             {activeTab === "dynamic" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
+          </button>
+          <button 
+             onClick={() => setActiveTab("mitre")}
+             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "mitre" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
+          >
+            MITRE & CVE
+            {activeTab === "mitre" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
           </button>
         </div>
 
@@ -527,11 +640,11 @@ function Report({ reportData }) {
                  </div>
                  <div className="bg-brand-secondary border border-brand-border p-5 rounded-xl flex items-center justify-between">
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Min SDK</span>
-                    <span className="text-[10px] font-mono text-white">{app?.sdk?.min || "N/A"}</span>
+                    <span className="text-[10px] font-mono text-white">{app?.min_sdk || "N/A"}</span>
                  </div>
                  <div className="bg-brand-secondary border border-brand-border p-5 rounded-xl flex items-center justify-between">
                     <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Target SDK</span>
-                    <span className="text-[10px] font-mono text-white">{app?.sdk?.target || "N/A"}</span>
+                    <span className="text-[10px] font-mono text-white">{app?.target_sdk || "N/A"}</span>
                  </div>
               </div>
             </motion.div>
@@ -692,58 +805,142 @@ function Report({ reportData }) {
               exit={{ opacity: 0, y: -10 }}
               className="grid grid-cols-1 md:grid-cols-4 gap-8"
             >
-              <div className="bg-brand-secondary border border-brand-border rounded-2xl p-6 h-[70vh] overflow-auto custom-scrollbar">
+              <div className="bg-brand-secondary border border-brand-border rounded-2xl p-6 h-[75vh] overflow-auto custom-scrollbar">
                 <h3 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-6 flex items-center">
-                   <Layout className="w-4 h-4 mr-2" /> Asset Browser
+                   <AlertCircle className="w-4 h-4 mr-2" /> Target Vulnerabilities
                 </h3>
-                <div className="space-y-1">
-                   {[...new Set(findings.map(f => f.file).filter(f => f && f !== "N/A"))].map((file, i) => (
-                     <button 
-                       key={i}
-                       onClick={() => viewCode(file)}
-                       className={`w-full text-left p-3 rounded-lg text-xs font-mono truncate transition-all ${selectedFile === file ? 'bg-brand-red/10 text-brand-red' : 'text-gray-400 hover:bg-white/5'}`}
-                     >
-                        {file.split('/').pop()}
-                     </button>
-                   ))}
+                <div className="space-y-3">
+                   {findings.map((vuln, originalIdx) => {
+                     if (!vuln.file || vuln.file === "N/A" || vuln.file === "Extracted Strings") return null;
+                     return (
+                       <div 
+                         key={originalIdx}
+                         onClick={() => handleAnalyzeVuln(vuln, originalIdx)}
+                         className={`w-full text-left p-4 rounded-xl border transition-all cursor-pointer group ${selectedVuln?.idx === originalIdx ? 'bg-brand-red/10 border-brand-red/30' : 'bg-brand-dark/50 border-white/5 hover:border-brand-red/30'}`}
+                       >
+                          <div className="flex items-center space-x-2 mb-2">
+                             <span className={`px-2 py-0.5 rounded text-[8px] font-bold uppercase tracking-widest ${getSeverityStyles(vuln.severity)}`}>
+                               {vuln.severity}
+                             </span>
+                          </div>
+                          <h4 className={`text-sm font-bold mb-2 ${selectedVuln?.idx === originalIdx ? 'text-brand-red' : 'text-white group-hover:text-brand-red'} transition-colors line-clamp-2`}>
+                             {vuln.title}
+                          </h4>
+                          <div className="flex items-center text-[10px] font-mono text-gray-500 truncate">
+                             <FileCode className="w-3 h-3 mr-1" /> {vuln.file.split('/').pop()}
+                          </div>
+                       </div>
+                     );
+                   })}
                 </div>
               </div>
 
-              <div className="md:col-span-3 bg-[#0d0d0d] border border-brand-border rounded-2xl h-[70vh] relative overflow-hidden shadow-2xl">
-                 {!selectedFile ? (
-                   <div className="flex flex-col items-center justify-center h-full text-gray-600">
-                      <FileCode className="w-12 h-12 mb-4 opacity-20" />
-                      <p className="text-xs font-bold tracking-widest uppercase">Select a file to inspect source</p>
+              <div className="md:col-span-3 h-[75vh] overflow-auto custom-scrollbar flex flex-col space-y-6">
+                 {!selectedVuln ? (
+                   <div className="flex flex-col items-center justify-center h-full text-gray-600 bg-brand-secondary border border-brand-border rounded-2xl">
+                      <Brain className="w-12 h-12 mb-4 opacity-20" />
+                      <p className="text-xs font-bold tracking-widest uppercase">Select a vulnerability to generate an AI fix</p>
                    </div>
-                 ) : isLoadingCode ? (
-                    <div className="flex flex-col items-center justify-center h-full text-gray-500">
-                      <Loader2 className="w-10 h-10 animate-spin mb-4 text-brand-red" />
-                      <span className="text-xs font-bold tracking-widest">DECRYPTING ASSET...</span>
+                 ) : isFixingCode ? (
+                    <div className="flex flex-col items-center justify-center h-full text-gray-500 bg-brand-secondary border border-brand-border rounded-2xl">
+                      <Loader2 className="w-10 h-10 animate-spin mb-4 text-purple-500" />
+                      <span className="text-xs font-bold tracking-widest uppercase text-purple-400">Fetching code & generating AI fix...</span>
+                    </div>
+                 ) : fixError ? (
+                    <div className="flex flex-col items-center justify-center h-full text-red-400 bg-brand-secondary border border-brand-border rounded-2xl p-8 text-center">
+                      <AlertCircle className="w-12 h-12 mb-4" />
+                      <p className="text-sm font-bold tracking-widest uppercase mb-2">AI Fix Generation Failed</p>
+                      <p className="text-xs">{fixError}</p>
                     </div>
                  ) : (
-                   <div className="h-full overflow-auto custom-scrollbar">
-                      <div className="sticky top-0 z-10 bg-[#0d0d0d]/80 backdrop-blur-sm border-b border-white/5 p-4 flex justify-between items-center">
-                         <div className="text-[10px] font-mono text-gray-500 truncate">{selectedFile}</div>
-                         <div className="flex space-x-2">
-                            <div className="w-2 h-2 rounded-full bg-red-500/30" />
-                            <div className="w-2 h-2 rounded-full bg-yellow-500/30" />
-                            <div className="w-2 h-2 rounded-full bg-green-500/30" />
+                   <>
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-6 h-[45vh]">
+                       <div className="bg-red-950/30 border border-red-500/30 rounded-2xl p-4 flex flex-col overflow-hidden">
+                         <div className="text-red-500 text-xs font-bold tracking-widest mb-4 flex items-center">
+                            ⚠ VULNERABLE CODE
                          </div>
-                      </div>
-                      <SyntaxHighlighter
-                        language="java"
-                        style={atomDark}
-                        showLineNumbers={true}
-                        customStyle={{
-                          margin: 0,
-                          padding: '2rem',
-                          fontSize: '13px',
-                          backgroundColor: 'transparent'
-                        }}
-                      >
-                        {code}
-                      </SyntaxHighlighter>
-                   </div>
+                         <div className="flex-1 overflow-auto custom-scrollbar bg-[#0d0d0d]/50 rounded-xl border border-red-500/20">
+                           {code ? (
+                             <SyntaxHighlighter
+                               language="java"
+                               style={atomDark}
+                               showLineNumbers={true}
+                               customStyle={{ margin: 0, padding: '1rem', fontSize: '11px', backgroundColor: 'transparent' }}
+                             >
+                               {code}
+                             </SyntaxHighlighter>
+                           ) : (
+                             <div className="text-gray-500 flex items-center justify-center h-full text-xs font-bold tracking-widest p-4 text-center">
+                               CODE UNAVAILABLE FOR THIS FINDING
+                             </div>
+                           )}
+                         </div>
+                       </div>
+                       
+                       <div className="bg-green-950/30 border border-green-500/30 rounded-2xl p-4 flex flex-col overflow-hidden">
+                         <div className="text-green-500 text-xs font-bold tracking-widest mb-4 flex items-center">
+                            ✅ AI FIXED VERSION
+                         </div>
+                         <div className="flex-1 overflow-auto custom-scrollbar bg-[#0d0d0d]/50 rounded-xl border border-green-500/20">
+                           {(() => {
+                             const aiData = aiFixes[selectedVuln.idx];
+                             if (!aiData) return null;
+                             
+                             const hasProperCode = aiData.secure_code && !aiData.secure_code.includes('Refer') && !aiData.secure_code.includes('Review');
+                             
+                             if (hasProperCode) {
+                               const formattedCode = (aiData.secure_code || '')
+                                 .replace(/\\\\n/g, '\n')
+                                 .replace(/\\n/g, '\n')
+                                 .replace(/\\\\t/g, '\t')
+                                 .replace(/\\t/g, '\t')
+                                 .split(';').join(';\n')
+                                 .split('{').join('{\n')
+                                 .split('}').join('\n}')
+                                 .replace(/\n\s*\n\s*\n/g, '\n\n')
+                                 .trim();
+                                 
+                               return (
+                                 <div className="p-4 text-gray-300 text-sm leading-relaxed">
+                                   <div className="mb-2 text-green-400 font-bold text-xs uppercase tracking-widest">Secure Code Example</div>
+                                   <SyntaxHighlighter language="java" style={atomDark} customStyle={{fontSize: '11px'}}>
+                                     {formattedCode}
+                                   </SyntaxHighlighter>
+                                 </div>
+                               );
+                             } else {
+                               return (
+                                 <div className="p-4 text-green-400 text-sm font-bold tracking-widest text-center mt-10">
+                                   See Step-by-Step Fix below ↓
+                                 </div>
+                               );
+                             }
+                           })()}
+                         </div>
+                       </div>
+                     </div>
+
+                     <div className="bg-brand-secondary border border-brand-border rounded-2xl p-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                           <div>
+                              <h4 className="text-purple-400 text-xs font-bold tracking-widest uppercase mb-3 flex items-center">
+                                 <Brain className="w-4 h-4 mr-2" /> Risk Explanation
+                              </h4>
+                              <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-5 rounded-xl border border-white/5 shadow-inner">
+                                {extractText(aiFixes[selectedVuln.idx]?.explanation)}
+                              </p>
+                           </div>
+                           <div>
+                              <h4 className="text-green-400 text-xs font-bold tracking-widest uppercase mb-3 flex items-center">
+                                 <CheckCircle2 className="w-4 h-4 mr-2" /> Step-by-Step Fix
+                              </h4>
+                              <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-5 rounded-xl border border-white/5 shadow-inner whitespace-pre-wrap">
+                                {extractText(aiFixes[selectedVuln.idx]?.fix)}
+                              </p>
+                           </div>
+                        </div>
+                     </div>
+                   </>
                  )}
               </div>
             </motion.div>
@@ -885,6 +1082,103 @@ function Report({ reportData }) {
                     </div>
                  </div>
               )}
+            </motion.div>
+          )}
+
+          {activeTab === "mitre" && (
+            <motion.div 
+              key="mitre"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-6"
+            >
+              <div className="flex justify-between items-center bg-brand-secondary/50 p-6 rounded-2xl border border-brand-border">
+                <h2 className="text-xl font-display font-bold text-white flex items-center">
+                  <Shield className="w-6 h-6 mr-3 text-brand-red" />
+                  MITRE ATT&CK & CVE Mappings
+                </h2>
+                <div className="text-sm font-bold tracking-widest uppercase text-gray-500">
+                  <span className="text-white bg-brand-red/20 px-3 py-1 rounded-full mr-2">{mitreData?.length || 0}</span>
+                  Mappings Found
+                </div>
+              </div>
+              
+              <div className="grid grid-cols-1 gap-6">
+                {mitreData && mitreData.length > 0 ? (
+                  mitreData.map((mapping, idx) => (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: idx * 0.05 }}
+                      key={idx} 
+                      className="bg-brand-secondary border border-brand-border rounded-2xl p-6 flex flex-col hover:border-white/20 transition-all"
+                    >
+                      <div className="flex justify-between items-start mb-6 border-b border-brand-border pb-4">
+                        <h3 className="text-lg font-bold text-white max-w-[70%] leading-tight">{mapping.vulnerability}</h3>
+                        <span className={`px-3 py-1 rounded-md text-[10px] font-bold tracking-widest uppercase ${getSeverityStyles(mapping.severity)}`}>
+                          {mapping.severity}
+                        </span>
+                      </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                        <div className="bg-blue-950/30 border border-blue-500/30 p-5 rounded-xl flex flex-col justify-between relative overflow-hidden">
+                          <h4 className="text-blue-400 text-[10px] font-bold tracking-widest uppercase mb-3 z-10">MITRE ATT&CK</h4>
+                          <div className="text-4xl font-display font-bold text-blue-500/80 mb-2 z-10">{mapping.mitre_id}</div>
+                          <div className="text-white font-bold mb-2 z-10">{mapping.mitre_name}</div>
+                          <div className="inline-block self-start bg-blue-500/20 text-blue-300 text-[10px] font-bold px-2 py-1 rounded tracking-widest uppercase z-10">
+                            {mapping.mitre_tactic}
+                          </div>
+                          <Shield className="absolute -bottom-6 -right-6 w-32 h-32 text-blue-500/10 z-0" />
+                        </div>
+                        
+                        <div className="bg-orange-950/30 border border-orange-500/30 p-5 rounded-xl flex flex-col justify-between relative overflow-hidden">
+                          <h4 className="text-orange-400 text-[10px] font-bold tracking-widest uppercase mb-3 z-10">CVE REFERENCE</h4>
+                          <div className="text-3xl font-display font-bold text-orange-500/80 mb-2 z-10">{mapping.cve_id}</div>
+                          <p className="text-sm text-gray-300 leading-relaxed z-10">{mapping.cve_description}</p>
+                          <AlertCircle className="absolute -bottom-6 -right-6 w-32 h-32 text-orange-500/10 z-0" />
+                        </div>
+                      </div>
+                      
+                      <div className="bg-brand-dark/50 rounded-xl p-4 border border-white/5 flex items-center">
+                        <div className="mr-4">
+                          <span className="text-[10px] font-bold tracking-widest uppercase text-gray-500 block mb-1">CVSS SCORE</span>
+                          <span className={`text-2xl font-bold font-display ${mapping.cvss_score >= 7 ? 'text-red-500' : mapping.cvss_score >= 4 ? 'text-yellow-500' : 'text-green-500'}`}>
+                            {mapping.cvss_score}
+                          </span>
+                        </div>
+                        <div className="flex-1">
+                          <div className="h-3 w-full bg-black/50 rounded-full overflow-hidden">
+                            <div 
+                              className={`h-full rounded-full ${mapping.cvss_score >= 7 ? 'bg-red-500' : mapping.cvss_score >= 4 ? 'bg-yellow-500' : 'bg-green-500'}`} 
+                              style={{ width: `${(mapping.cvss_score / 10) * 100}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="ml-4 w-20 text-right">
+                          <span className={`text-[10px] font-bold tracking-widest uppercase ${mapping.cvss_score >= 7 ? 'text-red-500' : mapping.cvss_score >= 4 ? 'text-yellow-500' : 'text-green-500'}`}>
+                            {mapping.cvss_score >= 9 ? 'CRITICAL' : mapping.cvss_score >= 7 ? 'HIGH' : mapping.cvss_score >= 4 ? 'MEDIUM' : 'LOW'}
+                          </span>
+                        </div>
+                      </div>
+                      {mapping.remediation && (
+                        <div className="mt-4 p-4 bg-white/5 rounded-xl border border-white/10">
+                          <div className="text-xs font-bold tracking-widest uppercase text-green-400 mb-2 flex items-center gap-2">
+                            <span>✅</span> REMEDIATION
+                          </div>
+                          <p className="text-gray-300 text-sm leading-relaxed">{mapping.remediation}</p>
+                        </div>
+                      )}
+                    </motion.div>
+                  ))
+                ) : (
+                  <div className="bg-brand-secondary border border-brand-border p-12 rounded-2xl flex flex-col items-center justify-center text-gray-500">
+                    <Shield className="w-16 h-16 mb-4 opacity-20" />
+                    <h3 className="text-lg font-bold text-white mb-2">No Mappings Found</h3>
+                    <p className="text-sm">We couldn't map any of the findings to specific MITRE ATT&CK tactics or CVEs.</p>
+                  </div>
+                )}
+              </div>
             </motion.div>
           )}
 

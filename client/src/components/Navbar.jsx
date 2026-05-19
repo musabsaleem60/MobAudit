@@ -1,10 +1,17 @@
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { Menu } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
+import { Menu, LogOut } from "lucide-react";
 import MenuOverlay from "./MenuOverlay";
 
 function Navbar() {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const navigate = useNavigate();
+
+  const handleLogout = () => {
+    localStorage.removeItem('mobaudit_token');
+    localStorage.removeItem('mobaudit_user');
+    navigate('/login');
+  };
 
   return (
     <>
@@ -30,6 +37,13 @@ function Navbar() {
             <Link to="/beta" className="text-white text-sm font-bold tracking-widest hover:text-brand-red transition-colors border-b-2 border-brand-red pb-0.5">
               BETA ACCESS
             </Link>
+            <button 
+              onClick={handleLogout}
+              className="flex items-center space-x-2 text-gray-400 hover:text-brand-red transition-colors"
+            >
+              <LogOut className="w-4 h-4" />
+              <span className="text-xs font-bold tracking-widest uppercase">Logout</span>
+            </button>
           </div>
         </div>
       </nav>

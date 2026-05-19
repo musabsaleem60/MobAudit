@@ -8,8 +8,11 @@ const cors = require("cors");
 const mongoose = require("mongoose");
 const { exec } = require("child_process");
 const crypto = require("crypto");
-const { OpenAI } = require("openai");
 const PDFDocument = require("pdfkit");
+const jwt = require('jsonwebtoken');
+const bcrypt = require('bcryptjs');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'mobaudit_jwt_secret_2024';
 
 const app = express();
 app.use(cors());
@@ -17,9 +20,7 @@ app.use(express.json());
 
 const MOBSF_API_KEY = (process.env.MOBSF_API_KEY || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
 const MOBSF_URL = process.env.MOBSF_BASE_URL;
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
-const openai = OPENAI_API_KEY ? new OpenAI({ apiKey: OPENAI_API_KEY }) : null;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const CI_CD_TOKEN = process.env.CI_CD_TOKEN || "mobaudit_secret_67890";
 
 // ================== 🔒 AUTH MIDDLEWARE ==================
@@ -38,20 +39,40 @@ const get = (obj, path, defaultValue = undefined) => {
   return path.split(".").reduce((o, key) => (o ? o[key] : undefined), obj) ?? defaultValue;
 };
 
+function mapOwaspCategory(title, description) {
+  const text = (title + " " + description).toLowerCase();
+  
+  if (text.includes("permission")) return "M1: Improper Platform Usage";
+  if (text.includes("storage") || text.includes("file") || text.includes("database") || text.includes("sqlite") || text.includes("log") || text.includes("logcat")) return "M2: Insecure Data Storage";
+  if (text.includes("http") || text.includes("ssl") || text.includes("tls") || text.includes("certificate") || text.includes("network") || text.includes("cleartext")) return "M3: Insecure Communication";
+  if (text.includes("auth") || text.includes("password") || text.includes("login") || text.includes("credential")) return "M4: Insecure Authentication";
+  if (text.includes("crypto") || text.includes("aes") || text.includes("md5") || text.includes("sha1") || text.includes("des") || text.includes("cipher") || text.includes("encrypt") || text.includes("random")) return "M5: Insufficient Cryptography";
+  if (text.includes("activity") || text.includes("intent") || text.includes("broadcast") || text.includes("receiver") || text.includes("provider") || text.includes("exported") || text.includes("component")) return "M6: Insecure Authorization";
+  if (text.includes("webview") || text.includes("javascript") || text.includes("xss")) return "M7: Client Code Quality";
+  if (text.includes("tamper") || text.includes("root") || text.includes("debug") || text.includes("emulator") || text.includes("obfuscat")) return "M8: Code Tampering";
+  if (text.includes("reverse") || text.includes("decompil") || text.includes("binary") || text.includes("native")) return "M9: Reverse Engineering";
+  if (text.includes("function") || text.includes("api") || text.includes("superfluous") || text.includes("sdk")) return "M10: Extraneous Functionality";
+  
+  return "Uncategorized";
+}
+
 // Normalize vulnerability
 function normalizeFinding(item, severityLabel) {
+  const title = item.title || item.name || item.issue || "Unknown Issue";
+  const description = item.description || item.detail || item.message || item.info || "No description available";
+  let owasp = item["owasp-mobile"] || item.owasp;
+  
+  if (!owasp || owasp.trim() === "" || owasp === "Uncategorized") {
+    owasp = mapOwaspCategory(title, description);
+  }
+
   return {
-    title: item.title || item.name || item.issue || "Unknown Issue",
-    description:
-      item.description ||
-      item.detail ||
-      item.message ||
-      item.info ||
-      "No description available",
+    title: title,
+    description: description,
     severity: severityLabel,
     file: item.file || item.file_path || item.source || "N/A",
     line: item.line || item.line_number || "N/A",
-    owasp: item["owasp-mobile"] || item.owasp || "Uncategorized",
+    owasp: owasp,
     cvss: item.cvss || 0,
     cwe: item.cwe || ""
   };
@@ -183,6 +204,8 @@ function parseMobAuditReport(report) {
       package: report.package_name || report.packagename || "com.unknown.app",
       version: report.version_name || report.version || "1.0",
       main_activity: report.main_activity || "N/A",
+      min_sdk: report.min_sdk || report.minsdk || report.minSdkVersion || report.android_min_sdk || "N/A",
+      target_sdk: report.target_sdk || report.targetsdk || report.targetSdkVersion || report.android_target_sdk || "N/A",
       sdk: report.sdk || {},
       counts: {
         activities: asArray(report.activities).length,
@@ -227,6 +250,7 @@ function scanForSecrets(report) {
   ];
   
   stringsList.forEach(str => {
+    if (typeof str !== 'string') return;
     SECRET_PATTERNS.forEach(pattern => {
       const matches = str.matchAll(pattern.regex);
       for (const match of matches) {
@@ -281,8 +305,89 @@ function scanForSecrets(report) {
 
 // MongoDB Connection
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log("Connected to MongoDB"))
+  .then(() => {
+    console.log("Connected to MongoDB");
+    createDefaultAdmin();
+  })
   .catch(err => console.error("MongoDB connection error:", err));
+
+// Auth Schema & Logic
+const userSchema = new mongoose.Schema({
+  username: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  role: { type: String, default: 'user' },
+  created_at: { type: Date, default: Date.now }
+});
+const User = mongoose.model('User', userSchema);
+
+async function createDefaultAdmin() {
+  try {
+    const existing = await User.findOne({ username: 'mobaudit' });
+    if (!existing) {
+      const hashed = await bcrypt.hash('mobaudit123', 10);
+      await User.create({ username: 'mobaudit', password: hashed, role: 'admin' });
+      console.log('[AUTH] Default admin user created');
+    }
+  } catch (err) {
+    console.error('[AUTH] Error creating admin:', err.message);
+  }
+}
+
+const authenticateJWT = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Unauthorized: No token provided' });
+  }
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (err) {
+    return res.status(401).json({ error: 'Unauthorized: Invalid token' });
+  }
+};
+
+// Auth Routes
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const user = await User.findOne({ username });
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign(
+      { id: user._id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, username: user.username, role: user.role });
+  } catch (err) {
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+app.post('/api/auth/register', async (req, res) => {
+  const { username, password } = req.body;
+  try {
+    const existing = await User.findOne({ username });
+    if (existing) return res.status(400).json({ error: 'Username already exists' });
+    const hashed = await bcrypt.hash(password, 10);
+    const user = await User.create({ username, password: hashed });
+    const token = jwt.sign(
+      { id: user._id, username: user.username, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+    res.json({ token, username: user.username, role: user.role });
+  } catch (err) {
+    res.status(500).json({ error: 'Registration failed' });
+  }
+});
+
+app.get('/api/auth/verify', authenticateJWT, (req, res) => {
+  res.json({ valid: true, user: req.user });
+});
 
 // Auto-start MobSF
 const isWin = process.platform === "win32";
@@ -334,7 +439,7 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 // ================== 🔍 ANALYZE ==================
-app.post("/api/analyze", upload.single("apk"), async (req, res) => {
+app.post("/api/analyze", authenticateJWT, upload.single("apk"), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
   try {
@@ -430,7 +535,7 @@ app.get("/api/health", (req, res) => {
 
 
 // ================== 🛡️ RISK SCORE ==================
-app.get("/api/risk-score/:hash", async (req, res) => {
+app.get("/api/risk-score/:hash", authenticateJWT, async (req, res) => {
   console.log(`[FLOW] 1. Initializing risk calculation for hash: ${req.params.hash}`);
   try {
     // 1. Fetch
@@ -518,7 +623,7 @@ app.get("/api/risk-score/:hash", async (req, res) => {
 });
 
 // ================== 🔑 SECRETS ==================
-app.get("/api/secrets/:hash", async (req, res) => {
+app.get("/api/secrets/:hash", authenticateJWT, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -536,7 +641,7 @@ app.get("/api/secrets/:hash", async (req, res) => {
 });
 
 // ================== 📊 GET REPORT ==================
-app.get("/api/report/:hash", async (req, res) => {
+app.get("/api/report/:hash", authenticateJWT, async (req, res) => {
   console.log(`[API] Fetching report for hash: ${req.params.hash}`);
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
@@ -660,13 +765,9 @@ app.get("/api/code/:hash", async (req, res) => {
   console.log(`[CODE VIEW] 🔑 Hash: ${hash}`);
 
   try {
-    const params = new URLSearchParams();
-    params.append('hash', hash);
-    params.append('file', file);
-
     const response = await axios.post(
       `${MOBSF_URL}/api/v1/view_source`,
-      params.toString(),
+      `hash=${hash}&file=${file}&type=apk`,
       {
         headers: {
           "Authorization": MOBSF_API_KEY,
@@ -715,8 +816,8 @@ app.post("/api/ai/fix-suggestion", async (req, res) => {
       return res.json(cachedFix);
     }
 
-    // IF NO OPENAI KEY, RETURN MOCK DATA FOR UI DEMO
-    if (!openai) {
+    // IF NO GROQ KEY, RETURN MOCK DATA FOR UI DEMO
+    if (!process.env.GROQ_API_KEY) {
       console.log(`[AI] Mocking fix for: ${title} (No API Key)`);
       const mockResult = {
         vuln_hash: vulnHash,
@@ -730,33 +831,45 @@ app.post("/api/ai/fix-suggestion", async (req, res) => {
 
     console.log(`[AI] Generating real fix for: ${title}...`);
 
-    const prompt = `
-      As a MobAudit mobile security expert, analyze the following vulnerability found during a MobAudit scan:
-      Title: ${title}
-      Description: ${description}
-      ${code_snippet ? `Affected Code:\n${code_snippet}` : ''}
+    const prompt = `You are an Android security expert. Return ONLY a JSON object with no extra text.
 
-      Please provide:
-      1. A simple explanation of why this is a security risk.
-      2. A clear, step-by-step secure fix suggestion.
-      3. A corrected, secure code snippet (Java or XML as appropriate).
+Vulnerability: ${title}
+Description: ${description}
 
-      Format your response as a JSON object with these fields:
-      {
-        "explanation": "...",
-        "fix": "...",
-        "secure_code": "..."
-      }
-      Provide ONLY the JSON object.
-    `;
+Return this exact JSON:
+{"explanation":"Why this is dangerous in 2 sentences","fix":"1. First fix step\\n2. Second fix step\\n3. Third fix step","secure_code":"// Secure implementation example\\npublic void secureMethod() {\\n    // Replace vulnerable code here\\n}"}`;
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" }
+    const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "llama-3.1-8b-instant",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: 1000,
+        temperature: 0.1
+      })
     });
-
-    const aiResult = JSON.parse(response.choices[0].message.content);
+    const groqData = await response.json();
+    console.log('[GROQ] Raw response:', JSON.stringify(groqData).substring(0, 200));
+    if (!groqData.choices || !groqData.choices[0]) {
+      console.error('[GROQ] Unexpected response:', groqData);
+      throw new Error('Groq returned unexpected response format');
+    }
+    let aiResult;
+    try {
+      const content = groqData.choices[0].message.content;
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      aiResult = JSON.parse(jsonMatch ? jsonMatch[0] : content);
+    } catch(parseErr) {
+      aiResult = {
+        explanation: groqData.choices[0].message.content,
+        fix: "Review the explanation above for fix steps",
+        secure_code: "// See risk explanation for remediation guidance"
+      };
+    }
 
     // Store in cache
     const newFix = await AIFixCache.create({
@@ -771,6 +884,116 @@ app.post("/api/ai/fix-suggestion", async (req, res) => {
   } catch (error) {
     console.error("[AI Error]:", error.message);
     res.status(500).json({ error: "AI service failed to generate a suggestion" });
+  }
+});
+
+// ================== MITRE & CVE ==================
+function mapToMitreAndCve(findings) {
+  const mitreMap = {
+    'janus': { id: 'T1582', name: 'Exploit Application', tactic: 'Execution', score: 8.1, cve: 'CVE-2017-13156', cve_desc: 'Android Janus vulnerability allows attackers to prepend arbitrary code to APK files.', remediation: 'Sign your APK with both v1 and v2/v3 signature schemes. Use apksigner tool with --v2-signing-enabled true flag when building release APKs.' },
+    'debug': { id: 'T1418', name: 'Application Discovery', tactic: 'Discovery', score: 5.3, cve: 'CVE-2024-0045', cve_desc: 'Debug configurations expose sensitive application internals to attackers.', remediation: 'Set android:debuggable="false" in AndroidManifest.xml for release builds. Use BuildConfig.DEBUG flag to conditionally enable debug features.' },
+    'certificate': { id: 'T1587.003', name: 'Develop Capabilities: Code Signing Certificates', tactic: 'Resource Development', score: 6.5, cve: 'CVE-2023-21492', cve_desc: 'Improper certificate validation allows man-in-the-middle attacks.', remediation: 'Use a proper release keystore with strong credentials. Never ship apps signed with debug certificates. Implement certificate pinning for network requests.' },
+    'log': { id: 'T1409', name: 'Access Sensitive Data in Device Logs', tactic: 'Collection', score: 6.2, cve: 'CVE-2021-0395', cve_desc: 'Sensitive information exposed through Android logcat logs.', remediation: 'Remove all Log.d(), Log.v(), Log.i() calls containing sensitive data. Use ProGuard rules to strip logging in release builds: -assumenosideeffects class android.util.Log.' },
+    'storage': { id: 'T1533', name: 'Data from Local System', tactic: 'Collection', score: 7.1, cve: 'CVE-2021-0316', cve_desc: 'Insecure data storage allows unauthorized access to sensitive files.', remediation: 'Use Android Keystore for sensitive data. Prefer Internal Storage over External. Use EncryptedSharedPreferences for storing sensitive key-value pairs.' },
+    'sqlite': { id: 'T1005', name: 'Data from Local System', tactic: 'Collection', score: 7.5, cve: 'CVE-2021-0339', cve_desc: 'Unencrypted SQLite databases expose sensitive user data.', remediation: 'Use SQLCipher to encrypt SQLite databases. Never store plaintext passwords or tokens in the database. Apply proper file permissions to database files.' },
+    'sql': { id: 'T1190', name: 'Exploit Public-Facing Application', tactic: 'Initial Access', score: 9.1, cve: 'CVE-2022-20007', cve_desc: 'SQL injection vulnerability allows unauthorized database access.', remediation: 'Always use parameterized queries or prepared statements. Never concatenate user input directly into SQL strings. Use Room database with proper query annotations.' },
+    'crypto': { id: 'T1600', name: 'Weaken Encryption', tactic: 'Defense Evasion', score: 7.4, cve: 'CVE-2020-0095', cve_desc: 'Weak cryptographic implementations allow decryption of sensitive data.', remediation: 'Use AES-256-GCM for encryption. Avoid MD5 and SHA1 for security purposes. Use Android Keystore for key management. Never hardcode encryption keys.' },
+    'permission': { id: 'T1404', name: 'Exploit for Privilege Escalation', tactic: 'Privilege Escalation', score: 7.8, cve: 'CVE-2021-0963', cve_desc: 'Excessive permissions grant unauthorized access to system resources.', remediation: 'Request only permissions that are absolutely necessary. Use runtime permissions for dangerous permissions. Implement permission rationale dialogs to explain usage.' },
+    'exported': { id: 'T1414', name: 'Capture SMS Messages', tactic: 'Collection', score: 6.8, cve: 'CVE-2021-0441', cve_desc: 'Exported components allow unauthorized access from other applications.', remediation: 'Set android:exported="false" for components that do not need to be accessed by other apps. Add proper permission checks for exported components.' },
+    'network': { id: 'T1040', name: 'Network Sniffing', tactic: 'Credential Access', score: 7.3, cve: 'CVE-2020-0073', cve_desc: 'Insecure network communication exposes data to interception.', remediation: 'Enforce HTTPS for all network communications. Implement certificate pinning. Use Network Security Configuration to restrict cleartext traffic.' },
+    'http': { id: 'T1557', name: 'Adversary-in-the-Middle', tactic: 'Collection', score: 8.2, cve: 'CVE-2021-0600', cve_desc: 'Cleartext HTTP traffic vulnerable to man-in-the-middle interception.', remediation: 'Replace all HTTP URLs with HTTPS. Add cleartextTrafficPermitted="false" in network_security_config.xml. Implement SSL certificate pinning for critical endpoints.' },
+    'webview': { id: 'T1456', name: 'Drive-by Compromise', tactic: 'Initial Access', score: 8.8, cve: 'CVE-2020-6506', cve_desc: 'WebView vulnerabilities allow execution of malicious scripts.', remediation: 'Disable JavaScript in WebView if not needed. Never use setJavaScriptEnabled(true) with untrusted content. Validate all URLs before loading in WebView.' },
+    'intent': { id: 'T1624', name: 'Event Triggered Execution', tactic: 'Persistence', score: 6.5, cve: 'CVE-2021-0394', cve_desc: 'Intent hijacking allows malicious apps to intercept sensitive data.', remediation: 'Use explicit intents instead of implicit intents for sensitive operations. Add proper permission checks. Use LocalBroadcastManager for internal app communication.' },
+    'random': { id: 'T1600.001', name: 'Reduce Key Space', tactic: 'Defense Evasion', score: 7.0, cve: 'CVE-2013-7372', cve_desc: 'Weak random number generation leads to predictable cryptographic keys.', remediation: 'Use SecureRandom instead of Random for security-sensitive operations. Never seed SecureRandom with predictable values like timestamps.' },
+    'root': { id: 'T1401', name: 'Device Administrator Permissions', tactic: 'Privilege Escalation', score: 8.5, cve: 'CVE-2022-20452', cve_desc: 'Insufficient root detection allows privilege escalation attacks.', remediation: 'Implement root detection using RootBeer library. Check for su binary, test-keys, and dangerous apps. Consider using SafetyNet Attestation API.' },
+    'temp': { id: 'T1533', name: 'Data from Local System', tactic: 'Collection', score: 5.5, cve: 'CVE-2021-0308', cve_desc: 'Temporary files may expose sensitive data to other applications.', remediation: 'Delete temporary files immediately after use. Use getCacheDir() instead of external storage. Encrypt sensitive temporary files and set proper file permissions.' },
+  };
+
+  const results = [];
+  const seen = new Set();
+
+  findings.forEach(finding => {
+    const text = `${finding.title} ${finding.description}`.toLowerCase();
+    Object.entries(mitreMap).forEach(([keyword, mapping]) => {
+      const key = `${mapping.id}-${finding.title}`;
+      if (text.includes(keyword) && !seen.has(key)) {
+        seen.add(key);
+        results.push({
+          vulnerability: finding.title,
+          severity: finding.severity,
+          mitre_id: mapping.id,
+          mitre_name: mapping.name,
+          mitre_tactic: mapping.tactic,
+          cvss_score: mapping.score,
+          cve_id: mapping.cve,
+          cve_description: mapping.cve_desc,
+          remediation: mapping.remediation
+        });
+      }
+    });
+  });
+
+  return results.sort((a, b) => b.cvss_score - a.cvss_score);
+}
+
+app.get("/api/mitre-cve/:hash", authenticateJWT, async (req, res) => {
+  console.log('[MITRE] Fetching for hash:', req.params.hash);
+  try {
+    const reportFromDb = await ScanReport.findOne({ hash: req.params.hash });
+    if (!reportFromDb) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+    
+    const parsedData = parseMobAuditReport(reportFromDb.report_data);
+    const findings = parsedData.findings || [];
+    console.log('[MITRE] Total findings to map:', findings.length);
+    
+    const mappings = mapToMitreAndCve(findings);
+    console.log('[MITRE] Total mappings found:', mappings.length);
+    
+    res.json({ 
+      hash: req.params.hash, 
+      total: mappings.length, 
+      mappings 
+    });
+  } catch (err) {
+    console.error('[MITRE ERROR]', err.message);
+    res.status(500).json({ error: "Failed to generate MITRE mappings" });
+  }
+});
+
+// ================== SCAN HISTORY ==================
+app.get("/api/scans/history", authenticateJWT, async (req, res) => {
+  try {
+    const reports = await ScanReport.find({}).sort({ _id: -1 }).limit(20);
+    res.json({
+      scans: reports.map(report => {
+        const parsed = parseMobAuditReport(report.report_data);
+        const findings = parsed.findings || [];
+        let score = 0;
+        findings.forEach(f => {
+          const sev = (f.severity || '').toLowerCase();
+          if (sev === 'high' || sev === 'critical') score += 3;
+          else if (sev === 'medium') score += 2;
+          else score += 1;
+        });
+        const finalScore = Math.min(score, 100);
+        return {
+          hash: report.hash,
+          app_name: parsed.app.name,
+          package: parsed.app.package,
+          version: parsed.app.version,
+          total_findings: findings.length,
+          risk_score: finalScore,
+          risk_level: finalScore > 70 ? 'High' : finalScore > 30 ? 'Medium' : 'Low',
+          dynamic_status: report.dynamic_status || 'not_started',
+          scanned_at: report._id.getTimestamp()
+        };
+      })
+    });
+  } catch (error) {
+    console.error("[HISTORY ERROR]", error);
+    res.status(500).json({ error: "Failed to fetch scan history" });
   }
 });
 
@@ -850,17 +1073,20 @@ app.post("/api/scan/start", authenticateCiToken, upload.single("apk"), async (re
 // Helper to check for ADB devices
 const checkAdbDevices = () => {
   return new Promise((resolve) => {
-    exec("adb devices", (err, stdout) => {
-      if (err) return resolve(false);
-      // 'adb devices' returns "List of devices attached" on line 1, then devices
-      const lines = stdout.split('\n').filter(line => line.trim().length > 0);
-      if (lines.length > 1) {
-        // Find if any device is listed as 'device' (not offline/unauthorized)
-        const hasDevice = lines.slice(1).some(line => line.includes('device') && !line.includes('offline') && !line.includes('unauthorized'));
-        resolve(hasDevice);
-      } else {
-        resolve(false);
-      }
+    const isWin = process.platform === "win32";
+    const adbPath = isWin ? '"C:\\Program Files\\Genymobile\\Genymotion\\tools\\adb.exe"' : 'adb';
+    
+    exec(`${adbPath} connect 192.168.174.101:5555`, () => {
+      exec(`${adbPath} devices`, (err, stdout) => {
+        if (err) return resolve(false);
+        const lines = stdout.split('\n').filter(line => line.trim().length > 0);
+        if (lines.length > 1) {
+          const hasDevice = lines.slice(1).some(line => line.includes('device') && !line.includes('offline') && !line.includes('unauthorized'));
+          resolve(hasDevice);
+        } else {
+          resolve(false);
+        }
+      });
     });
   });
 };
@@ -907,7 +1133,7 @@ app.post("/api/analyze/dynamic/:hash", async (req, res) => {
         console.log(`[DYNAMIC] 🧬 Starting session for hash: ${hash}`);
         
         // 1. Start Analysis
-        await axios.post(`${MOBSF_URL}/api/v1/dynamic/start_analysis`, `hash=${hash}`, {
+        await axios.post(`${MOBSF_URL}/api/v1/dynamic/start_analysis`, `hash=${hash}&device_id=192.168.174.101:5555`, {
           headers: {
             "Authorization": MOBSF_API_KEY,
             "X-Mobsf-Api-Key": MOBSF_API_KEY,
