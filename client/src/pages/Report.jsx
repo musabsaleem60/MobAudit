@@ -462,10 +462,73 @@ function Report({ reportData }) {
 
   return (
     <div className="text-white pb-20 w-full animate-in fade-in duration-500">
-      <div className="max-w-6xl mx-auto px-4">
+      
+      {/* Report Page Navbar */}
+      <div style={{
+        background: '#0a0a0f',
+        borderBottom: '1px solid rgba(225,29,72,0.2)',
+        padding: '12px 32px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        position: 'sticky',
+        top: 0,
+        zIndex: 100,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <img src="/logo.png" alt="MobAudit" style={{ height: '34px', objectFit: 'contain' }} />
+          <button
+            onClick={() => navigate('/dashboard')}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.15)',
+              color: '#aaa',
+              padding: '6px 16px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: '600',
+            }}
+          >
+            ← DASHBOARD
+          </button>
+        </div>
+        <span style={{ color: '#444', fontSize: '11px', letterSpacing: '2px' }}>SECURITY REPORT</span>
+        <button
+          onClick={() => { 
+            localStorage.removeItem('mobaudit_token'); 
+            localStorage.removeItem('mobaudit_user'); 
+            localStorage.removeItem('token'); 
+            navigate('/login'); 
+          }}
+          style={{
+            background: '#E11D48',
+            border: 'none',
+            color: '#fff',
+            padding: '7px 18px',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontSize: '12px',
+            fontWeight: '700',
+          }}
+        >
+          LOGOUT
+        </button>
+      </div>
+
+      <div className="max-w-6xl mx-auto px-4 mt-8">
         
         {/* APP HEADER */}
-        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 bg-brand-secondary/30 p-8 rounded-3xl border border-brand-border backdrop-blur-sm">
+        <div style={{
+          background: 'linear-gradient(135deg, #0d0d14 0%, #1a0a0f 100%)',
+          border: '1px solid rgba(225,29,72,0.2)',
+          borderRadius: '16px',
+          padding: '28px 32px',
+          marginBottom: '24px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
           <div className="flex items-center space-x-6">
             <div className="w-20 h-20 bg-gradient-to-br from-brand-red to-red-900 rounded-2xl flex items-center justify-center shadow-2xl">
               <Smartphone className="w-10 h-10 text-white" />
@@ -489,56 +552,63 @@ function Report({ reportData }) {
         </div>
 
         {/* TABS INDICATOR */}
-        <div className="flex space-x-8 border-b border-brand-border mb-12">
-          <button 
-             onClick={() => setActiveTab("overview")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "overview" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            OVERVIEW
-            {activeTab === "overview" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
-          <button 
-             onClick={() => setActiveTab("vulnerabilities")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "vulnerabilities" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            VULNERABILITIES
-            {activeTab === "vulnerabilities" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
-          <button 
-             onClick={() => setActiveTab("code")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "code" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            AI CODE FIXER
-            {activeTab === "code" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
-          <button 
-             onClick={() => setActiveTab("secrets")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "secrets" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            SECRETS {secretsData?.length > 0 && <span className="ml-2 bg-brand-red text-[10px] px-1.5 py-0.5 rounded-full text-white">{secretsData.length}</span>}
-            {activeTab === "secrets" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
-          <button 
-             onClick={() => setActiveTab("dynamic")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "dynamic" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            DYNAMIC ANALYSIS
-            {activeTab === "dynamic" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
-          <button 
-             onClick={() => setActiveTab("mitre")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative ${activeTab === "mitre" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            MITRE & CVE
-            {activeTab === "mitre" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
-          <button 
-             onClick={() => setActiveTab("privacy")}
-             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative flex items-center ${activeTab === "privacy" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
-          >
-            <Shield className="w-4 h-4 mr-2" /> PRIVACY & MALWARE
-            {activeTab === "privacy" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
-          </button>
+        <div style={{
+          display: 'flex',
+          gap: '4px',
+          borderBottom: '1px solid rgba(255,255,255,0.08)',
+          marginBottom: '24px',
+          overflowX: 'auto',
+          overflowY: 'hidden',
+          scrollbarWidth: 'none',
+          msOverflowStyle: 'none',
+          paddingBottom: '0',
+          flexWrap: 'nowrap',
+        }}>
+          {[
+            { id: 'overview', label: 'Overview', icon: '📊' },
+            { id: 'vulnerabilities', label: 'Vulnerabilities', icon: '🔍' },
+            { id: 'ai-fixer', label: 'AI Fixer', icon: '🤖' },
+            { id: 'secrets', label: 'Secrets', icon: '🔑' },
+            { id: 'dynamic', label: 'Dynamic', icon: '⚡' },
+            { id: 'mitre', label: 'MITRE & CVE', icon: '🗺️' },
+            { id: 'privacy', label: 'Privacy & Malware', icon: '🛡️' },
+          ].map(tab => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                padding: '12px 18px',
+                background: activeTab === tab.id ? 'rgba(225,29,72,0.15)' : 'transparent',
+                border: 'none',
+                borderBottom: activeTab === tab.id ? '2px solid #E11D48' : '2px solid transparent',
+                color: activeTab === tab.id ? '#ffffff' : '#666666',
+                fontSize: '12px',
+                fontWeight: activeTab === tab.id ? '700' : '500',
+                letterSpacing: '0.5px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap',
+                transition: 'all 0.2s',
+                borderRadius: '6px 6px 0 0',
+                flexShrink: 0,
+              }}
+            >
+              <span>{tab.icon}</span>
+              <span>{tab.label}</span>
+              {tab.id === 'secrets' && secretsData?.length > 0 && (
+                <span style={{
+                  background: '#E11D48',
+                  color: '#fff',
+                  borderRadius: '999px',
+                  fontSize: '10px',
+                  padding: '1px 6px',
+                  fontWeight: '800',
+                }}>{secretsData.length}</span>
+              )}
+            </button>
+          ))}
         </div>
 
         {/* DOWNLOAD BUTTONS */}
@@ -824,7 +894,7 @@ function Report({ reportData }) {
             </motion.div>
           )}
 
-          {activeTab === "code" && (
+          {activeTab === "ai-fixer" && (
             <motion.div 
               key="code"
               initial={{ opacity: 0, y: 10 }}
