@@ -462,6 +462,10 @@ function Report({ reportData }) {
 
   return (
     <div className="text-white pb-20 w-full animate-in fade-in duration-500">
+      {/* Hide the global navbar and its spacer div locally to avoid duplicate headers and top gaps */}
+      <style>{`
+        nav, .h-\\[72px\\] { display: none !important; }
+      `}</style>
       
       {/* Report Page Navbar */}
       <div style={{
