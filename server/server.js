@@ -1344,6 +1344,215 @@ app.get("/api/report/download/pdf/:hash", async (req, res) => {
     addPageFooter(pageNum);
     pageNum++;
     
+    // VirusTotal Page
+    doc.addPage();
+    y = 50;
+
+    // Header bar
+    doc.rect(0, 0, 612, 45).fill('#0a0a0a');
+    doc.fontSize(11).fillColor('#E11D48').font('Helvetica-Bold')
+       .text('VIRUSTOTAL THREAT INTELLIGENCE', 50, 15, { width: 400 });
+    doc.fontSize(8).fillColor('#666666').font('Helvetica')
+       .text(`MobAudit Security Platform`, 400, 17, { width: 162, align: 'right' });
+
+    y = 65;
+
+    const vt = reportData.virustotal || {};
+
+    // Score Banner
+    const vtColor = (vt.malicious || 0) === 0 ? '#10B981' : (vt.malicious || 0) < 5 ? '#F59E0B' : '#E11D48';
+    doc.rect(50, y, 512, 70).fill(vtColor);
+    doc.fontSize(32).fillColor('#ffffff').font('Helvetica-Bold')
+       .text(`${vt.malicious || 0}/${vt.total || 0}`, 70, y + 12, { width: 200 });
+    doc.fontSize(12).fillColor('#ffffff').font('Helvetica')
+       .text('engines flagged this file as malicious', 70, y + 50, { width: 400 });
+    const vtStatus = (vt.malicious || 0) === 0 ? 'CLEAN' : (vt.malicious || 0) < 5 ? 'SUSPICIOUS' : 'MALICIOUS';
+    doc.fontSize(14).fillColor('#ffffff').font('Helvetica-Bold')
+       .text(vtStatus, 400, y + 25, { width: 142, align: 'right' });
+
+    y += 90;
+
+    // Stats boxes
+    const vtStats = [
+      { label: 'Malicious', value: vt.malicious || 0, color: '#E11D48' },
+      { label: 'Suspicious', value: vt.suspicious || 0, color: '#F59E0B' },
+      { label: 'Undetected', value: vt.undetected || 0, color: '#10B981' },
+    ];
+    vtStats.forEach((stat, i) => {
+      const bx = 50 + (i * 174);
+      doc.rect(bx, y, 162, 60).fill('#1a1a2e');
+      doc.fontSize(24).fillColor(stat.color).font('Helvetica-Bold')
+         .text(stat.value, bx, y + 8, { width: 162, align: 'center' });
+      doc.fontSize(9).fillColor('#888888').font('Helvetica')
+         .text(stat.label, bx, y + 38, { width: 162, align: 'center' });
+    });
+
+    y += 80;
+
+    // SHA256
+    doc.rect(50, y, 512, 35).fill('#111111');
+    doc.fontSize(8).fillColor('#666666').font('Helvetica')
+       .text('SHA256:', 60, y + 8);
+    doc.fontSize(7).fillColor('#aaaaaa').font('Helvetica')
+       .text(vt.sha256 || 'N/A', 60, y + 20, { width: 492 });
+
+    y += 50;
+
+    // Threat label
+    if (vt.threat_label) {
+      doc.rect(50, y, 512, 35).fill('#2d0a0a');
+      doc.rect(50, y, 4, 35).fill('#E11D48');
+      doc.fontSize(10).fillColor('#E11D48').font('Helvetica-Bold')
+         .text(`THREAT CLASSIFICATION: ${vt.threat_label.toUpperCase()}`, 64, y + 12, { width: 488 });
+      y += 50;
+    }
+
+    // Flagged engines table
+    if (vt.flagged_engines && vt.flagged_engines.length > 0) {
+      doc.fontSize(11).fillColor('#ffffff').font('Helvetica-Bold')
+         .text('FLAGGED BY ANTIVIRUS ENGINES', 50, y);
+      y += 20;
+      
+      doc.rect(50, y, 512, 24).fill('#E11D48');
+      doc.fontSize(9).fillColor('#ffffff').font('Helvetica-Bold')
+         .text('Engine', 60, y + 7)
+         .text('Detection', 350, y + 7);
+      y += 24;
+
+      vt.flagged_engines.forEach((engine, i) => {
+        doc.rect(50, y, 512, 22).fill(i % 2 === 0 ? '#1a1a2e' : '#141424');
+        doc.fontSize(8).fillColor('#cccccc').font('Helvetica')
+           .text(engine.engine, 60, y + 7, { width: 250 });
+        doc.fontSize(8).fillColor('#E11D48').font('Helvetica')
+           .text(engine.result, 350, y + 7, { width: 202 });
+        y += 22;
+      });
+    } else {
+      doc.rect(50, y, 512, 50).fill('#0a2d1a');
+      doc.rect(50, y, 4, 50).fill('#10B981');
+      doc.fontSize(12).fillColor('#10B981').font('Helvetica-Bold')
+         .text('✓ No antivirus engines flagged this file as malicious', 64, y + 18, { width: 488 });
+      y += 65;
+    }
+
+    addPageFooter(pageNum);
+    pageNum++;
+
+    // Privacy & Malware Page
+    doc.addPage();
+    y = 50;
+
+    doc.rect(0, 0, 612, 45).fill('#0a0a0a');
+    doc.fontSize(11).fillColor('#E11D48').font('Helvetica-Bold')
+       .text('PRIVACY & MALWARE ANALYSIS', 50, 15, { width: 400 });
+    doc.fontSize(8).fillColor('#666666').font('Helvetica')
+       .text('MobAudit Custom Engine', 400, 17, { width: 162, align: 'right' });
+
+    y = 65;
+
+    const ca = reportData.custom_analysis || {};
+
+    // Privacy Risks
+    doc.fontSize(11).fillColor('#ffffff').font('Helvetica-Bold')
+       .text('PRIVACY RISK ANALYSIS', 50, y);
+    y += 20;
+
+    const privacyRisks = ca.privacy_risks || [];
+    if (privacyRisks.length === 0) {
+      doc.rect(50, y, 512, 35).fill('#0a2d1a');
+      doc.fontSize(9).fillColor('#10B981').font('Helvetica')
+         .text('No privacy risks detected', 60, y + 12);
+      y += 50;
+    } else {
+      privacyRisks.forEach(risk => {
+        doc.rect(50, y, 512, 30).fill('#1a0a0a');
+        doc.rect(50, y, 4, 30).fill('#E11D48');
+        doc.fontSize(9).fillColor('#cccccc').font('Helvetica')
+           .text(risk, 64, y + 10, { width: 488 });
+        y += 35;
+      });
+      y += 10;
+    }
+
+    // Dangerous Permissions
+    doc.fontSize(11).fillColor('#ffffff').font('Helvetica-Bold')
+       .text('DANGEROUS PERMISSIONS', 50, y);
+    y += 20;
+
+    const dangerPerms = ca.dangerous_permissions || [];
+    if (dangerPerms.length === 0) {
+      doc.rect(50, y, 512, 35).fill('#0a2d1a');
+      doc.fontSize(9).fillColor('#10B981').font('Helvetica')
+         .text('No dangerous permissions found', 60, y + 12);
+      y += 50;
+    } else {
+      doc.fontSize(8).fillColor('#888888').font('Helvetica')
+         .text(`${dangerPerms.length} dangerous permissions detected`, 50, y);
+      y += 15;
+      dangerPerms.forEach((perm, i) => {
+        if (i % 2 === 0 && i > 0) y += 0;
+        doc.rect(50, y, 512, 22).fill(i % 2 === 0 ? '#1a0a0a' : '#140808');
+        doc.fontSize(8).fillColor('#F59E0B').font('Helvetica')
+           .text(perm.replace('android.permission.', ''), 60, y + 7, { width: 492 });
+        y += 22;
+      });
+      y += 15;
+    }
+
+    // Malware Indicators
+    doc.fontSize(11).fillColor('#ffffff').font('Helvetica-Bold')
+       .text('MALWARE INDICATORS', 50, y);
+    y += 20;
+
+    const malwareInds = ca.malware_indicators || [];
+    if (malwareInds.length === 0) {
+      doc.rect(50, y, 512, 35).fill('#0a2d1a');
+      doc.fontSize(9).fillColor('#10B981').font('Helvetica')
+         .text('No malware indicators detected', 60, y + 12);
+      y += 50;
+    } else {
+      malwareInds.forEach(ind => {
+        const indColor = ind.severity === 'Critical' ? '#E11D48' : ind.severity === 'High' ? '#F59E0B' : '#888888';
+        doc.rect(50, y, 512, 35).fill('#1a0a0a');
+        doc.rect(50, y, 4, 35).fill(indColor);
+        doc.fontSize(9).fillColor('#cccccc').font('Helvetica-Bold')
+           .text(ind.indicator, 64, y + 5, { width: 380 });
+        doc.fontSize(8).fillColor(indColor).font('Helvetica')
+           .text(ind.severity, 450, y + 10, { width: 100, align: 'right' });
+        y += 40;
+      });
+      y += 10;
+    }
+
+    // Manifest Issues
+    doc.fontSize(11).fillColor('#ffffff').font('Helvetica-Bold')
+       .text('MANIFEST SECURITY ISSUES', 50, y);
+    y += 20;
+
+    const manifestIssues = ca.manifest_issues || [];
+    if (manifestIssues.length === 0) {
+      doc.rect(50, y, 512, 35).fill('#0a2d1a');
+      doc.fontSize(9).fillColor('#10B981').font('Helvetica')
+         .text('No manifest security issues found', 60, y + 12);
+      y += 50;
+    } else {
+      manifestIssues.forEach(issue => {
+        const issColor = issue.severity === 'High' ? '#E11D48' : '#F59E0B';
+        doc.rect(50, y, 512, 45).fill('#1a1a2e');
+        doc.rect(50, y, 4, 45).fill(issColor);
+        doc.fontSize(9).fillColor('#ffffff').font('Helvetica-Bold')
+           .text(issue.issue, 64, y + 7, { width: 380 });
+        doc.fontSize(7).fillColor('#888888').font('Helvetica')
+           .text(issue.detail, 64, y + 22, { width: 430 });
+        doc.fontSize(8).fillColor(issColor)
+           .text(issue.severity, 450, y + 10, { width: 100, align: 'right' });
+        y += 50;
+      });
+    }
+
+    addPageFooter(pageNum);
+    pageNum++;
+    
     // ===================== RECOMMENDATIONS PAGE =====================
     doc.addPage();
     addPageHeader('Recommendations');
