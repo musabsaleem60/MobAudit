@@ -177,6 +177,26 @@ function Dashboard() {
       <header className="w-full bg-[#0a0a0f] border-b border-[#E11D48]/30 px-6 py-4 flex items-center justify-between sticky top-0 z-50 backdrop-blur-md">
         <div className="flex items-center">
           <img src="/logo.png" alt="MobAudit" style={{ width: '140px' }} className="drop-shadow-[0_0_10px_rgba(255,255,255,0.05)]" />
+          <button
+            onClick={() => navigate('/')}
+            style={{
+              background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.15)',
+              color: '#aaaaaa',
+              padding: '6px 16px',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '12px',
+              fontWeight: '600',
+              letterSpacing: '1px',
+              marginLeft: '20px',
+              transition: 'all 0.3s',
+            }}
+            onMouseEnter={e => { e.target.style.borderColor = '#E11D48'; e.target.style.color = '#fff'; }}
+            onMouseLeave={e => { e.target.style.borderColor = 'rgba(255,255,255,0.15)'; e.target.style.color = '#aaaaaa'; }}
+          >
+            ← HOME
+          </button>
         </div>
         <div className="hidden md:block text-xs font-mono font-bold tracking-[0.25em] text-gray-500 uppercase">
           SECURITY DASHBOARD
