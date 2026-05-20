@@ -159,6 +159,7 @@ function Report({ reportData }) {
   const [mitreData, setMitreData] = useState(null);
   const [customAnalysis, setCustomAnalysis] = useState(null);
   const [vtData, setVtData] = useState(null);
+  const [playstoreData, setPlaystoreData] = useState(null);
   
   // Dynamic Analysis State
   const [dynamicStatus, setDynamicStatus] = useState(report?.dynamic_status || 'not_started'); 
@@ -267,6 +268,12 @@ function Report({ reportData }) {
         if (vtRes.ok) {
           const vtJson = await vtRes.json();
           setVtData(vtJson);
+        }
+
+        const psRes = await fetch(`http://${window.location.hostname}:5001/api/playstore-check/${hash}`, { headers });
+        if (psRes.ok) {
+          const psJson = await psRes.json();
+          setPlaystoreData(psJson);
         }
         
         setError(null);
@@ -643,6 +650,7 @@ function Report({ reportData }) {
             { id: 'dynamic', label: 'Dynamic', icon: '⚡' },
             { id: 'mitre', label: 'MITRE & CVE', icon: '🗺️' },
             { id: 'privacy', label: 'Privacy & Malware', icon: '🛡️' },
+            { id: 'playstore', label: 'Play Store Check', icon: '🏪' },
           ].map(tab => (
             <button
               key={tab.id}
@@ -1839,6 +1847,318 @@ function Report({ reportData }) {
                   </div>
                 )}
               </div>
+            </motion.div>
+          )}
+
+          {activeTab === 'playstore' && (
+            <motion.div initial={{opacity:0, y:20}} animate={{opacity:1, y:0}}>
+              
+              {!playstoreData ? (
+                <div style={{textAlign: 'center', padding: '60px'}}>
+                  <div style={{fontSize: '48px', marginBottom: '16px'}}>🏪</div>
+                  <p style={{color: '#666'}}>Loading Play Store compliance check...</p>
+                </div>
+              ) : (
+                <>
+                  {playstoreData?.metadata && (
+                    <div style={{
+                      background: 'rgba(59,130,246,0.05)',
+                      border: '1px solid rgba(59,130,246,0.15)',
+                      borderRadius: '10px',
+                      padding: '12px 16px',
+                      marginBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '10px'
+                    }}>
+                      <span style={{fontSize: '16px'}}>📋</span>
+                      <div style={{flex: 1}}>
+                        <p style={{color: '#ccc', fontSize: '11px', margin: 0, lineHeight: '1.5'}}>
+                          <strong style={{color: '#3B82F6'}}>{playstoreData.metadata.policy_version}</strong>
+                          {' • '}
+                          {playstoreData.metadata.checks_performed} automated checks performed
+                        </p>
+                        <p style={{color: '#666', fontSize: '10px', margin: 0, marginTop: '2px'}}>
+                          {playstoreData.metadata.disclaimer}
+                        </p>
+                      </div>
+                      <a 
+                        href={playstoreData.metadata.documentation_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        style={{
+                          color: '#3B82F6',
+                          fontSize: '10px',
+                          textDecoration: 'none',
+                          whiteSpace: 'nowrap'
+                        }}
+                      >
+                        Policy Reference ↗
+                      </a>
+                    </div>
+                  )}
+
+                  {/* Verdict Banner */}
+                  <div style={{
+                    background: playstoreData.verdict === 'READY' ? 'linear-gradient(135deg, rgba(16,185,129,0.15), rgba(16,185,129,0.05))' :
+                                playstoreData.verdict === 'NEEDS_REVIEW' ? 'linear-gradient(135deg, rgba(245,158,11,0.15), rgba(245,158,11,0.05))' :
+                                'linear-gradient(135deg, rgba(225,29,72,0.15), rgba(225,29,72,0.05))',
+                    border: `1px solid ${
+                      playstoreData.verdict === 'READY' ? '#10B981' :
+                      playstoreData.verdict === 'NEEDS_REVIEW' ? '#F59E0B' : '#E11D48'
+                    }`,
+                    borderRadius: '16px',
+                    padding: '32px',
+                    marginBottom: '24px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '24px'
+                  }}>
+                    <div style={{fontSize: '64px'}}>
+                      {playstoreData.verdict === 'READY' ? '✅' :
+                       playstoreData.verdict === 'NEEDS_REVIEW' ? '⚠️' :
+                       playstoreData.verdict === 'NOT_READY' ? '🚧' : '🚫'}
+                    </div>
+                    <div style={{flex: 1}}>
+                      <h2 style={{
+                        color: playstoreData.verdict === 'READY' ? '#10B981' :
+                               playstoreData.verdict === 'NEEDS_REVIEW' ? '#F59E0B' : '#E11D48',
+                        fontSize: '28px',
+                        fontWeight: '800',
+                        margin: 0,
+                        marginBottom: '8px'
+                      }}>
+                        {playstoreData.verdict === 'READY' ? 'READY TO PUBLISH' :
+                         playstoreData.verdict === 'NEEDS_REVIEW' ? 'NEEDS REVIEW' :
+                         playstoreData.verdict === 'NOT_READY' ? 'NOT READY' : 'WILL BE REJECTED'}
+                      </h2>
+                      <p style={{color: '#ccc', fontSize: '14px', margin: 0}}>
+                        {playstoreData.verdict_message}
+                      </p>
+                    </div>
+                    <div style={{textAlign: 'center'}}>
+                      <div style={{
+                        color: playstoreData.compliance_percentage >= 80 ? '#10B981' :
+                               playstoreData.compliance_percentage >= 60 ? '#F59E0B' : '#E11D48',
+                        fontSize: '48px',
+                        fontWeight: '900',
+                        lineHeight: 1
+                      }}>
+                        {playstoreData.compliance_percentage}%
+                      </div>
+                      <p style={{color: '#666', fontSize: '11px', letterSpacing: '2px', marginTop: '6px', margin: 0}}>COMPLIANCE</p>
+                    </div>
+                  </div>
+
+                  {/* Stats Row */}
+                  <div style={{display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px', marginBottom: '24px'}}>
+                    {[
+                      {label: 'Passed Checks', value: playstoreData.passed?.length || 0, color: '#10B981', icon: '✅'},
+                      {label: 'Critical Issues', value: playstoreData.critical?.length || 0, color: '#E11D48', icon: '🚨'},
+                      {label: 'Warnings', value: playstoreData.warnings?.length || 0, color: '#F59E0B', icon: '⚠️'},
+                    ].map((s, i) => (
+                      <div key={i} style={{
+                        background: '#0d0d14',
+                        border: '1px solid rgba(255,255,255,0.06)',
+                        borderRadius: '12px',
+                        padding: '20px',
+                        textAlign: 'center'
+                      }}>
+                        <div style={{fontSize: '24px', marginBottom: '8px'}}>{s.icon}</div>
+                        <div style={{color: s.color, fontSize: '32px', fontWeight: '800'}}>{s.value}</div>
+                        <div style={{color: '#666', fontSize: '11px', marginTop: '4px', letterSpacing: '1px'}}>{s.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Critical Issues */}
+                  {playstoreData.critical?.length > 0 && (
+                    <div style={{marginBottom: '24px'}}>
+                      <h3 style={{
+                        color: '#E11D48', 
+                        fontSize: '14px', 
+                        fontWeight: '800', 
+                        letterSpacing: '2px', 
+                        marginBottom: '14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>🚨</span> CRITICAL ISSUES (MUST FIX BEFORE PUBLISH)
+                      </h3>
+                      {playstoreData.critical.map((c, i) => (
+                        <motion.div 
+                          key={i}
+                          initial={{opacity:0, x:-10}}
+                          animate={{opacity:1, x:0}}
+                          transition={{delay: i * 0.05}}
+                          style={{
+                            background: 'rgba(225,29,72,0.06)',
+                            border: '1px solid rgba(225,29,72,0.25)',
+                            borderRadius: '12px',
+                            padding: '20px',
+                            marginBottom: '10px'
+                          }}
+                        >
+                          <div style={{display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px'}}>
+                            <span style={{fontSize: '18px'}}>❌</span>
+                            <h4 style={{color: '#fff', fontSize: '15px', fontWeight: '700', margin: 0}}>{c.title}</h4>
+                          </div>
+                          <p style={{color: '#ccc', fontSize: '13px', marginBottom: '12px', lineHeight: '1.6'}}>
+                            {c.message}
+                          </p>
+                          {c.fix && (
+                            <div style={{
+                              background: 'rgba(16,185,129,0.08)',
+                              border: '1px solid rgba(16,185,129,0.2)',
+                              borderRadius: '8px',
+                              padding: '12px'
+                            }}>
+                              <p style={{
+                                color: '#10B981', 
+                                fontSize: '10px', 
+                                fontWeight: '700', 
+                                letterSpacing: '2px', 
+                                marginBottom: '6px',
+                                margin: '0 0 6px 0'
+                              }}>
+                                ✅ HOW TO FIX
+                              </p>
+                              <p style={{color: '#ccc', fontSize: '13px', margin: 0, lineHeight: '1.5'}}>{c.fix}</p>
+                            </div>
+                          )}
+                          {(c.link || c.source) && (
+                            <a 
+                              href={c.link || c.source} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              style={{
+                                color: '#3B82F6',
+                                fontSize: '11px',
+                                textDecoration: 'none',
+                                marginTop: '12px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              📖 Read official documentation →
+                            </a>
+                          )}
+                        </motion.div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Warnings */}
+                  {playstoreData.warnings?.length > 0 && (
+                    <div style={{marginBottom: '24px'}}>
+                      <h3 style={{
+                        color: '#F59E0B', 
+                        fontSize: '14px', 
+                        fontWeight: '800', 
+                        letterSpacing: '2px', 
+                        marginBottom: '14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>⚠️</span> WARNINGS (RECOMMENDED FIXES)
+                      </h3>
+                      {playstoreData.warnings.map((w, i) => (
+                        <div key={i} style={{
+                          background: 'rgba(245,158,11,0.05)',
+                          border: '1px solid rgba(245,158,11,0.2)',
+                          borderRadius: '12px',
+                          padding: '16px',
+                          marginBottom: '8px'
+                        }}>
+                          <div style={{display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px'}}>
+                            <span>⚠️</span>
+                            <h4 style={{color: '#fff', fontSize: '14px', fontWeight: '700', margin: 0}}>{w.title}</h4>
+                          </div>
+                          <p style={{color: '#aaa', fontSize: '12px', marginBottom: '8px', lineHeight: '1.6'}}>{w.message}</p>
+                          {w.fix && (
+                            <p style={{color: '#F59E0B', fontSize: '11px', margin: 0, lineHeight: '1.5'}}>
+                              💡 {w.fix}
+                            </p>
+                          )}
+                          {(w.link || w.source) && (
+                            <a 
+                              href={w.link || w.source} 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              style={{
+                                color: '#3B82F6',
+                                fontSize: '11px',
+                                textDecoration: 'none',
+                                marginTop: '10px',
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px'
+                              }}
+                            >
+                              📖 Read official documentation →
+                            </a>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Passed Checks */}
+                  {playstoreData.passed?.length > 0 && (
+                    <div>
+                      <h3 style={{
+                        color: '#10B981', 
+                        fontSize: '14px', 
+                        fontWeight: '800', 
+                        letterSpacing: '2px', 
+                        marginBottom: '14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <span>✅</span> PASSED CHECKS ({playstoreData.passed.length})
+                      </h3>
+                      <div style={{display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: '8px'}}>
+                        {playstoreData.passed.map((p, i) => (
+                          <div key={i} style={{
+                            background: 'rgba(16,185,129,0.04)',
+                            border: '1px solid rgba(16,185,129,0.15)',
+                            borderRadius: '8px',
+                            padding: '12px',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '10px'
+                          }}>
+                            <span style={{color: '#10B981', fontSize: '14px'}}>✓</span>
+                            <span style={{color: '#ccc', fontSize: '12px'}}>{p.title}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Disclaimer Footer */}
+                  <div style={{
+                    marginTop: '32px',
+                    padding: '16px',
+                    background: 'rgba(255,255,255,0.02)',
+                    border: '1px solid rgba(255,255,255,0.05)',
+                    borderRadius: '10px',
+                    textAlign: 'center'
+                  }}>
+                    <p style={{color: '#555', fontSize: '11px', margin: 0, lineHeight: '1.6'}}>
+                      🏪 Play Store compliance check is based on Google Play Developer Policy guidelines. 
+                      <br/>
+                      Final review is performed by Google during app submission.
+                    </p>
+                  </div>
+
+                </>
+              )}
+
             </motion.div>
           )}
 

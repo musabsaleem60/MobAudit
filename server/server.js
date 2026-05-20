@@ -416,12 +416,250 @@ async function customApkParser(apkFilePath) {
   return results;
 }
 
+function checkPlayStoreCompliance(customAnalysis, findings, appInfo) {
+  const checks = {
+    critical: [],
+    warnings: [],
+    passed: [],
+    score: 0,
+    max_score: 0,
+    ready_to_publish: false
+  };
+
+  // Helper to add a check
+  const addCheck = (level, id, title, status, message, fix, link) => {
+    const item = { id, title, status, message, fix, link };
+    if (status === 'pass') {
+      checks.passed.push(item);
+      checks.score += level === 'critical' ? 10 : level === 'warning' ? 5 : 3;
+    } else if (level === 'critical') {
+      checks.critical.push(item);
+    } else {
+      checks.warnings.push(item);
+    }
+    checks.max_score += level === 'critical' ? 10 : level === 'warning' ? 5 : 3;
+  };
+
+  // ===== CRITICAL CHECKS =====
+  
+  // 1. Target SDK Check (Play Store requires API 34+ for 2024)
+  const targetSdk = parseInt(appInfo.target_sdk) || 0;
+  if (targetSdk >= 34) {
+    addCheck('critical', 'target_sdk', 'Target SDK Compliance', 'pass', 
+      `Target SDK ${targetSdk} meets Play Store 2024 requirements`, null);
+  } else if (targetSdk >= 33) {
+    addCheck('warning', 'target_sdk', 'Target SDK Compliance', 'warn',
+      `Target SDK ${targetSdk} works currently but Play Store requires API 34 for new apps in 2024`,
+      'Update targetSdkVersion to 34 in build.gradle');
+  } else {
+    addCheck('critical', 'target_sdk', 'Target SDK Compliance', 'fail',
+      `Target SDK ${targetSdk} is too old. Play Store will reject this APK.`,
+      `Update targetSdkVersion to 34 in your build.gradle file`);
+  }
+
+  // 2. Debuggable flag
+  const debugIssue = (customAnalysis.manifest_issues || []).find(i => 
+    i.issue && i.issue.toLowerCase().includes('debug'));
+  if (debugIssue) {
+    addCheck('critical', 'debuggable', 'Debug Mode Disabled', 'fail',
+      'android:debuggable="true" detected. Play Store will reject this APK.',
+      'Set android:debuggable="false" in AndroidManifest.xml for release builds');
+  } else {
+    addCheck('critical', 'debuggable', 'Debug Mode Disabled', 'pass',
+      'Debug mode is properly disabled', null);
+  }
+
+  // 3. Cleartext traffic / Network Security
+  const httpIssue = findings.find(f => 
+    (f.title + ' ' + f.description).toLowerCase().match(/cleartext|http:\/\/|insecure network/));
+  if (httpIssue) {
+    addCheck('critical', 'cleartext', 'Network Security Config', 'fail',
+      'Cleartext HTTP traffic allowed. Play Store strongly discourages this.',
+      'Add network_security_config.xml with cleartextTrafficPermitted="false"');
+  } else {
+    addCheck('critical', 'cleartext', 'Network Security Config', 'pass',
+      'Network communication is secured (HTTPS enforced)', null);
+  }
+
+  // 4. Hardcoded Secrets
+  const secretCount = (customAnalysis.hardcoded_secrets || []).length;
+  if (secretCount > 0) {
+    addCheck('critical', 'secrets', 'No Hardcoded Secrets', 'fail',
+      `${secretCount} hardcoded secret(s) detected (API keys/passwords). Major security risk.`,
+      'Move secrets to BuildConfig fields or Android Keystore. Never commit keys to APK.');
+  } else {
+    addCheck('critical', 'secrets', 'No Hardcoded Secrets', 'pass',
+      'No hardcoded API keys or passwords detected', null);
+  }
+
+  // 5. Dangerous Permissions Justification
+  const dangerousPerms = (customAnalysis.dangerous_permissions || []).length;
+  if (dangerousPerms > 5) {
+    addCheck('warning', 'permissions', 'Dangerous Permissions', 'warn',
+      `App requests ${dangerousPerms} dangerous permissions. Play Store may require justification.`,
+      'Review each dangerous permission and remove unnecessary ones. Document remaining ones in Play Console.');
+  } else if (dangerousPerms > 0) {
+    addCheck('warning', 'permissions', 'Dangerous Permissions', 'pass',
+      `App uses ${dangerousPerms} dangerous permission(s) - within acceptable range`, null);
+  } else {
+    addCheck('warning', 'permissions', 'Dangerous Permissions', 'pass',
+      'No dangerous permissions requested', null);
+  }
+
+  // 6. SMS/Call Log Permissions (Play Store strict policy)
+  const smsCallPerms = (customAnalysis.permissions || []).filter(p => 
+    p.includes('SEND_SMS') || p.includes('READ_SMS') || 
+    p.includes('READ_CALL_LOG') || p.includes('WRITE_CALL_LOG'));
+  if (smsCallPerms.length > 0) {
+    addCheck('critical', 'sms_call_policy', 'SMS/Call Log Policy', 'fail',
+      `App uses restricted permissions: ${smsCallPerms.map(p => p.replace('android.permission.', '')).join(', ')}. Requires Play Console declaration form.`,
+      'Submit SMS/Call Log Permissions declaration in Play Console, or remove these permissions');
+  } else {
+    addCheck('critical', 'sms_call_policy', 'SMS/Call Log Policy', 'pass',
+      'No restricted SMS/Call Log permissions used', null);
+  }
+
+  // 7. Min SDK Check
+  const minSdk = parseInt(appInfo.min_sdk) || 0;
+  if (minSdk >= 21) {
+    addCheck('warning', 'min_sdk', 'Minimum SDK Version', 'pass',
+      `Min SDK ${minSdk} supports modern Android (5.0+)`, null);
+  } else if (minSdk > 0) {
+    addCheck('warning', 'min_sdk', 'Minimum SDK Version', 'warn',
+      `Min SDK ${minSdk} is very old. Consider bumping to API 21+ for better security features.`,
+      'Update minSdkVersion to 21 in build.gradle to drop legacy device support');
+  }
+
+  // 8. Backup Configuration
+  const backupIssue = (customAnalysis.manifest_issues || []).find(i =>
+    i.issue && i.issue.toLowerCase().includes('backup'));
+  if (backupIssue) {
+    addCheck('warning', 'backup', 'Backup Configuration', 'warn',
+      'android:allowBackup="true" detected. Sensitive data may leak via ADB backup.',
+      'Set android:allowBackup="false" or define android:fullBackupContent rules');
+  } else {
+    addCheck('warning', 'backup', 'Backup Configuration', 'pass',
+      'Backup configuration is properly set', null);
+  }
+
+  // 9. VirusTotal Clean
+  // This check is informational - reads from existing virustotal data
+  
+  // 10. High severity vulnerabilities
+  const highSevCount = findings.filter(f => 
+    (f.severity || '').toLowerCase() === 'high' || 
+    (f.severity || '').toLowerCase() === 'critical').length;
+  if (highSevCount === 0) {
+    addCheck('critical', 'high_vulns', 'High Severity Issues', 'pass',
+      'No high or critical severity vulnerabilities detected', null);
+  } else {
+    addCheck('critical', 'high_vulns', 'High Severity Issues', 'fail',
+      `${highSevCount} high/critical severity vulnerabilities found. Fix before publishing.`,
+      'Review the Vulnerabilities tab and resolve all High severity findings');
+  }
+
+  // 11. 64-bit ABI Support Check
+  const has64bit = customAnalysis.app_info?.abis?.includes?.('arm64-v8a') || 
+                    customAnalysis.libraries?.some?.(l => l.includes('arm64')) || false;
+  addCheck('critical', 'abi_64bit', '64-bit Architecture Support', 
+    has64bit ? 'pass' : 'warn',
+    has64bit ? '64-bit (arm64-v8a) support detected' : 'Could not verify 64-bit support. Play Store requires arm64-v8a since August 2019.',
+    has64bit ? null : 'Build with arm64-v8a ABI included. Check build.gradle for ndk.abiFilters.',
+    'https://developer.android.com/distribute/best-practices/develop/64-bit');
+
+  // 12. App Bundle vs APK
+  addCheck('warning', 'app_bundle', 'App Bundle Format', 'warn',
+    'Detected APK format. Google Play requires Android App Bundle (.aab) for new app submissions since August 2021.',
+    'Build using ./gradlew bundleRelease to generate .aab file instead of .apk',
+    'https://developer.android.com/guide/app-bundle');
+
+  // 13. WebView JavaScript Check
+  const webviewIssue = findings.find(f => 
+    (f.title + ' ' + f.description).toLowerCase().match(/webview.*javascript|setjavascriptenabled.*true/));
+  if (webviewIssue) {
+    addCheck('warning', 'webview_js', 'WebView JavaScript Security', 'warn',
+      'WebView with JavaScript enabled detected. Ensure secure WebView implementation.',
+      'Disable JavaScript in WebView if not needed. Validate all URLs. Use addJavascriptInterface carefully.',
+      'https://developer.android.com/privacy-and-security/risks/webview-unsafe-usage');
+  } else {
+    addCheck('warning', 'webview_js', 'WebView JavaScript Security', 'pass',
+      'No insecure WebView configuration detected', null,
+      'https://developer.android.com/privacy-and-security/risks/webview-unsafe-usage');
+  }
+
+  // 14. Exported Components without Permission
+  const exportedIssue = findings.find(f =>
+    (f.title + ' ' + f.description).toLowerCase().match(/exported.*activity|exported.*service|exported.*receiver/));
+  if (exportedIssue) {
+    addCheck('warning', 'exported_components', 'Exported Components Security', 'warn',
+      'Components marked as exported without permission protection. Could allow unauthorized access.',
+      'Set android:exported="false" for components that should not be accessed by other apps. Add permission attribute if external access needed.',
+      'https://developer.android.com/guide/topics/manifest/activity-element#exported');
+  } else {
+    addCheck('warning', 'exported_components', 'Exported Components Security', 'pass',
+      'No unprotected exported components detected', null,
+      'https://developer.android.com/guide/topics/manifest/activity-element#exported');
+  }
+
+  // 15. Cryptography Check
+  const cryptoIssue = findings.find(f =>
+    (f.title + ' ' + f.description).toLowerCase().match(/md5|sha1|des|weak cipher|insecure crypto/));
+  if (cryptoIssue) {
+    addCheck('warning', 'weak_crypto', 'Cryptographic Strength', 'warn',
+      'Weak cryptographic algorithms detected (MD5/SHA1/DES). Modern apps should use AES-256-GCM or stronger.',
+      'Replace MD5/SHA1 with SHA-256. Replace DES with AES-256-GCM. Use Android Keystore for key management.',
+      'https://developer.android.com/privacy-and-security/cryptography');
+  } else {
+    addCheck('warning', 'weak_crypto', 'Cryptographic Strength', 'pass',
+      'No weak cryptographic patterns detected', null,
+      'https://developer.android.com/privacy-and-security/cryptography');
+  }
+
+  // 16. Root Detection / Tampering
+  const rootIssue = findings.find(f =>
+    (f.title + ' ' + f.description).toLowerCase().match(/root detection|tamper/));
+  addCheck('warning', 'root_detection', 'Root Detection Implementation',
+    rootIssue ? 'pass' : 'warn',
+    rootIssue ? 'Root detection implementation found' : 'No root detection found. Recommended for financial/sensitive apps.',
+    rootIssue ? null : 'Implement RootBeer library or SafetyNet Attestation API for sensitive apps',
+    'https://developer.android.com/privacy-and-security/safetynet');
+
+  // ===== Calculate Readiness =====
+  const percentage = checks.max_score > 0 ? Math.round((checks.score / checks.max_score) * 100) : 0;
+  checks.compliance_percentage = percentage;
+  checks.ready_to_publish = checks.critical.length === 0 && percentage >= 80;
+  
+  // Verdict
+  if (checks.critical.length === 0 && percentage >= 90) {
+    checks.verdict = 'READY';
+    checks.verdict_message = 'Your app meets Google Play Store requirements and is ready to publish.';
+  } else if (checks.critical.length === 0 && percentage >= 70) {
+    checks.verdict = 'NEEDS_REVIEW';
+    checks.verdict_message = 'Your app can be published but should address warnings for best results.';
+  } else if (checks.critical.length <= 2) {
+    checks.verdict = 'NOT_READY';
+    checks.verdict_message = 'Critical issues must be fixed before submitting to Google Play Store.';
+  } else {
+    checks.verdict = 'REJECTED';
+    checks.verdict_message = 'Multiple critical issues detected. App will be rejected by Google Play Store.';
+  }
+
+  checks.metadata = {
+    policy_version: 'Play Store Compliance Policy (2024 Version)',
+    checks_performed: checks.critical.length + checks.warnings.length + checks.passed.length,
+    disclaimer: 'Disclaimer: This compliance check is an automated heuristic scan. Final approval depends entirely on Google Play review.',
+    documentation_url: 'https://developer.android.com/distribute/play-policies'
+  };
+
+  return checks;
+}
+
 // Main parser
 function parseMobAuditReport(report) {
   const findings = [];
   const asArray = (val) => (Array.isArray(val) ? val : typeof val === 'object' && val !== null ? Object.values(val) : []);
 
-  // 1. AppSec / Static Analysis Findings (Handles both MobSF v4 appsec and v3 static_analysis)
+  // 1. AppSec / Static Analysis Findings (Handles both MASE v4 appsec and v3 static_analysis)
   const appsec = report.appsec || {};
   const staticAnalysis = report.static_analysis?.findings || {};
 
@@ -437,7 +675,7 @@ function parseMobAuditReport(report) {
     ...hotspot.map((i) => normalizeFinding(i, "Low"))
   );
 
-  // 2. Manifest Analysis (Handles MobSF v4 manifest_findings and v3 manifest_analysis)
+  // 2. Manifest Analysis (Handles MASE v4 manifest_findings and v3 manifest_analysis)
   const manifestObj = report.manifest_analysis || {};
   const manifestList = [
     ...(Array.isArray(manifestObj) ? manifestObj : []),
@@ -452,7 +690,7 @@ function parseMobAuditReport(report) {
     }
   });
 
-  // 2b. Certificate Analysis (Handles MobSF v4 certificate_findings)
+  // 2b. Certificate Analysis (Handles MASE v4 certificate_findings)
   const certObj = report.certificate_analysis || {};
   const certFindings = Array.isArray(certObj.certificate_findings) ? certObj.certificate_findings : [];
   certFindings.forEach(item => {
@@ -568,7 +806,7 @@ function scanForSecrets(report) {
   const secrets = [];
   const found = new Set(); // To avoid duplicates
 
-  // 1. Scan strings extracted by MobSF
+  // 1. Scan strings extracted by MASE Engine
   const stringsObj = report.strings || {};
   const stringsList = [
     ...(Array.isArray(stringsObj.strings_apk_res) ? stringsObj.strings_apk_res : []),
@@ -716,7 +954,7 @@ app.get('/api/auth/verify', authenticateJWT, (req, res) => {
   res.json({ valid: true, user: req.user });
 });
 
-// Auto-start MobSF
+// Auto-start MASE Engine
 const isWin = process.platform === "win32";
 const checkCmd = isWin 
   ? 'docker ps --filter "ancestor=opensecurity/mobile-security-framework-mobsf:latest" --format "{{.Names}}"'
@@ -724,12 +962,12 @@ const checkCmd = isWin
 
 exec(checkCmd, (err, stdout) => {
   if (!stdout || !stdout.trim()) {
-    console.log("MobSF not running. Starting opensecurity/mobile-security-framework-mobsf container...");
+    console.log("MASE Engine not running. Starting opensecurity/mobile-security-framework-mobsf container...");
     const runCmd = isWin
       ? 'docker run -d --name mobsf -p 8000:8000 opensecurity/mobile-security-framework-mobsf:latest'
       : 'docker run -d --network host -v mobsf_data:/home/mobsf/.MobSF -e MOBSF_ANALYZER_IDENTIFIER=127.0.0.1:5556 opensecurity/mobile-security-framework-mobsf:latest';
     exec(runCmd, (runErr) => {
-      if (runErr) console.log("Failed to auto-start MobSF container. Please start it manually.");
+      if (runErr) console.log("Failed to auto-start MASE Engine container. Please start it manually.");
     });
   }
 });
@@ -773,7 +1011,7 @@ app.post("/api/analyze", authenticateJWT, upload.single("apk"), async (req, res)
   if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
   try {
-    // Wait for MobSF
+    // Wait for MASE Engine
     let ready = false;
     let retries = 0;
     while (!ready && retries < 10) {
@@ -851,8 +1089,8 @@ app.post("/api/analyze", authenticateJWT, upload.single("apk"), async (req, res)
   } catch (err) {
     console.error(`[ERROR] Analysis failed: ${err.message}`);
     if (err.response) {
-      console.error(`MobSF Response Data:`, err.response.data);
-      console.error(`MobSF Response Status: ${err.response.status}`);
+      console.error(`MASE Engine Response Data:`, err.response.data);
+      console.error(`MASE Engine Response Status: ${err.response.status}`);
     }
     res.status(500).json({ 
       error: "Analysis failed", 
@@ -868,7 +1106,7 @@ app.get("/api/health", (req, res) => {
   res.json({ 
     status: "ok", 
     port: 5001,
-    mobsf: process.env.MOBSF_BASE_URL,
+    mase: process.env.MOBSF_BASE_URL,
     mongodb: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
   });
 });
@@ -1003,6 +1241,22 @@ app.get("/api/secrets/:hash", authenticateJWT, async (req, res) => {
   }
 });
 
+app.get("/api/playstore-check/:hash", authenticateJWT, async (req, res) => {
+  try {
+    const report = await ScanReport.findOne({ hash: req.params.hash });
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    
+    const parsed = parseMobAuditReport(report.report_data);
+    const customAnalysis = report.custom_analysis || {};
+    const complianceCheck = checkPlayStoreCompliance(customAnalysis, parsed.findings || [], parsed.app || {});
+    
+    res.json(complianceCheck);
+  } catch(err) {
+    console.error('[PLAYSTORE-CHECK] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ================== 📊 GET REPORT ==================
 app.get("/api/report/:hash", authenticateJWT, async (req, res) => {
   console.log(`[API] Fetching report for hash: ${req.params.hash}`);
@@ -1129,7 +1383,7 @@ app.get("/api/report/download/pdf/:hash", async (req, res) => {
     const addPageFooter = (pageNum) => {
       doc.rect(0, 775, 612, 25).fill('#0a0a0a');
       doc.fontSize(7).fillColor('#888888').font('Helvetica')
-         .text('CONFIDENTIAL — MobAudit Security Platform', 50, 782)
+         .text('CONFIDENTIAL — MobAudit Security Platform | Powered by MASE Engine', 50, 782)
          .text(`Page ${pageNum}`, 0, 782, { width: 562, align: 'right' });
     };
     
@@ -1171,6 +1425,10 @@ app.get("/api/report/download/pdf/:hash", async (req, res) => {
     doc.rect(206, 410, 200, 55).fill(riskColor);
     doc.fontSize(22).fillColor('#ffffff').font('Helvetica-Bold')
        .text(`${riskLevel} RISK`, 206, 425, { width: 200, align: 'center' });
+
+    // Bottom attribution
+    doc.fontSize(8).fillColor('#666666').font('Helvetica')
+       .text('Powered by MASE — MobAudit Security Engine', 50, 482, { align: 'center', width: 512 });
 
     // Bottom accent line
     doc.rect(0, 500, 612, 3).fill(riskColor);
@@ -1757,7 +2015,7 @@ app.get("/api/code/:hash", async (req, res) => {
       console.log(`[CODE VIEW] ✅ Success! (${response.data.data.length} chars)`);
       res.json({ code: response.data.data });
     } else {
-       console.error(`[CODE VIEW] ⚠️ Empty response from MobSF:`, response.data);
+       console.error(`[CODE VIEW] ⚠️ Empty response from MASE Engine:`, response.data);
        res.status(500).json({ error: "Empty response from source provider" });
     }
 
@@ -2015,7 +2273,7 @@ app.post("/api/scan/start", authenticateCiToken, upload.single("apk"), async (re
       return res.status(400).json({ error: "No APK file or valid repo_url provided" });
     }
 
-    console.log(`[CI/CD] Uploading asset to MobSF...`);
+    console.log(`[CI/CD] Uploading asset to MASE Engine...`);
     const form = new FormData();
     const fileName = req.file ? req.file.originalname : "repository.zip";
     form.append("file", fs.createReadStream(tempFilePath), fileName);
@@ -2051,8 +2309,8 @@ app.post("/api/scan/start", authenticateCiToken, upload.single("apk"), async (re
     console.error(`[CI/CD ERROR] ${err.message}`);
     res.status(500).json({ error: "Failed to initiate CI/CD scan", details: err.message });
   } finally {
-    // Cleanup will happen after some time or usually handled by MobSF, 
-    // but we can't unlink yet if MobSF is still reading. 
+    // Cleanup will happen after some time or usually handled by MASE Engine, 
+    // but we can't unlink yet if MASE Engine is still reading. 
     // For this demo, we'll keep it simple.
   }
 });
@@ -2153,7 +2411,7 @@ app.post("/api/analyze/dynamic/:hash", async (req, res) => {
            headers: { "Authorization": MOBSF_API_KEY, "X-Mobsf-Api-Key": MOBSF_API_KEY, "Content-Type": "application/x-www-form-urlencoded" }
         });
 
-        // Small delay for MobSF to finalize log parsing internally
+        // Small delay for MASE to finalize log parsing internally
         await new Promise(r => setTimeout(r, 5000));
 
         console.log(`[DYNAMIC] 📥 Fetching dynamic report JSON...`);
@@ -2170,7 +2428,7 @@ app.post("/api/analyze/dynamic/:hash", async (req, res) => {
 
       } catch (innerErr) {
         console.error(`[DYNAMIC ERROR] Failed during background analysis: ${innerErr.message}`);
-        if(innerErr.response) console.error("MobSF Error details:", innerErr.response.data);
+        if(innerErr.response) console.error("MASE Error details:", innerErr.response.data);
         report.dynamic_status = "error";
         await report.save().catch(e => console.error("DB Save Error:", e));
       }

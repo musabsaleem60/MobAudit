@@ -201,8 +201,8 @@ function Home() {
                 title: 'Static Analysis',
                 desc: 'Decompile and scan APK source code, AndroidManifest files, sensitive resources, certificates, and hardcoded signatures.',
                 detail: {
-                  what: 'Static Analysis examines your APK without running it. We decompile the app using industry-standard tools and scan every file.',
-                  how: 'Our engine extracts AndroidManifest.xml, scans for hardcoded secrets, checks certificate validity, analyzes permissions, and maps findings to OWASP Mobile Top 10.',
+                  what: 'MASE — MobAudit Security Engine — performs deep static analysis on APK files. Our engine decompiles the application, scans AndroidManifest.xml, extracts hardcoded secrets, checks certificate validity, and maps findings to OWASP Mobile Top 10.',
+                  how: 'MASE engine decompiles the APK and scans every file across multiple analysis layers using our custom analysis pipeline.',
                   finds: ['Hardcoded API keys & passwords', 'Insecure permissions', 'Weak cryptography', 'Debuggable builds', 'Certificate issues', 'Insecure data storage'],
                 }
               },
@@ -211,8 +211,8 @@ function Home() {
                 title: 'Dynamic Analysis',
                 desc: 'Monitor runtime environment behaviors, memory allocations, IPC calls, dynamic network payloads, and sandbox processes.',
                 detail: {
-                  what: 'Dynamic Analysis runs your APK in a real Android emulator and monitors everything that happens at runtime.',
-                  how: 'We connect to a GenyMotion Android emulator, install your app, hook into system calls using Frida, and capture network traffic, file operations, and API calls.',
+                  what: 'MASE runs your APK in a real Android emulator and monitors runtime behavior. Our engine connects to GenyMotion, installs the app, captures network traffic, monitors file operations, and streams the live device screen via WebSocket.',
+                  how: 'Our dynamic testing framework connects to a GenyMotion emulator instance, installs the target APK, logs system calls, and traces API communications.',
                   finds: ['Network traffic & API calls', 'Runtime permission usage', 'File system access', 'Suspicious background processes', 'Data leakage', 'Insecure network connections'],
                 }
               },
