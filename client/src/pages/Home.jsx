@@ -154,13 +154,18 @@ function Home() {
       <section className="bg-[#0a0a0f] border-y border-white/5 py-8 px-6">
         <div className="max-w-[1400px] mx-auto grid grid-cols-2 lg:grid-cols-4 gap-8 lg:divide-x lg:divide-white/5 text-center">
           {[
-            { icon: "🔍", title: "Static Analysis", desc: "Deep APK Scanning" },
-            { icon: "🦠", title: "VirusTotal Intel", desc: "68+ AV Engines Reputation" },
-            { icon: "🤖", title: "AI Fix Engine", desc: "Smart Vulnerability Remediation" },
-            { icon: "📊", title: "Risk Scoring", desc: "OWASP + MITRE ATT&CK Maps" }
+            { icon: "</>", title: "Static Analysis", desc: "Deep APK Scanning" },
+            { icon: "⬡", title: "VirusTotal Intel", desc: "68+ AV Engines Reputation" },
+            { icon: "◈", title: "AI Fix Engine", desc: "Smart Vulnerability Remediation" },
+            { icon: "◎", title: "Risk Scoring", desc: "OWASP + MITRE ATT&CK Maps" }
           ].map((stat, i) => (
             <div key={i} className="flex flex-col items-center justify-center space-y-1.5 px-4">
-              <span className="text-3xl">{stat.icon}</span>
+              <span style={{ 
+                fontSize: '20px', 
+                fontWeight: '900', 
+                color: '#E11D48',
+                fontFamily: 'monospace'
+              }}>{stat.icon}</span>
               <h4 className="text-white font-bold text-sm tracking-wider">{stat.title}</h4>
               <p className="text-gray-500 text-xs uppercase tracking-widest">{stat.desc}</p>
             </div>
@@ -179,7 +184,13 @@ function Home() {
             <p className="text-gray-500 text-xs font-bold tracking-widest uppercase">Comprehensive end-to-end vulnerability intelligence</p>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div style={{ 
+            display: 'grid', 
+            gridTemplateColumns: 'repeat(3, 1fr)', 
+            gap: '24px',
+            overflow: 'visible',
+            paddingBottom: '40px'
+          }}>
             {[
               {
                 icon: "🔍",
@@ -220,6 +231,7 @@ function Home() {
                 transition={{ delay: i * 0.08, duration: 0.5 }}
                 whileHover={{ y: -5, borderColor: 'rgba(225, 29, 72, 0.5)' }}
                 className="bg-[#0d0d14] border-l-4 border-l-[#E11D48] border-y border-r border-white/5 p-8 rounded-2xl transition-all duration-300 shadow-lg flex flex-col justify-between"
+                style={{ minHeight: 'auto' }}
               >
                 <div className="space-y-4">
                   <span className="text-3xl block mb-2">{feat.icon}</span>

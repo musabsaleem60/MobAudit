@@ -28,8 +28,7 @@ function Navbar() {
 
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
-            <span className="text-brand-red text-2xl font-display font-bold">M</span>
-            <span className="text-white text-lg font-display font-extrabold tracking-widest italic hidden sm:block">MOBAUDIT</span>
+            <img src="/logo.png" alt="MobAudit" style={{ height: '36px', objectFit: 'contain' }} />
           </Link>
 
           {/* Right Section */}
