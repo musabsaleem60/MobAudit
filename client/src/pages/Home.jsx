@@ -1,316 +1,298 @@
-import { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { 
-  Bot, 
-  FileText, 
-  Mail, 
-  AlertTriangle, 
-  Container, 
-  Binary, 
-  Key, 
-  Calendar,
-  ArrowUpRight,
+  ArrowRight, 
+  Cpu, 
   ShieldCheck,
   Zap,
-  Users,
-  Brain,
-  ChevronRight,
-  Scan,
-  Activity
+  Lock,
+  Target,
+  Gift
 } from "lucide-react";
 import { Link } from "react-router-dom";
 
-const services = [
-  { 
-    icon: Binary, 
-    title: "Static & Dynamic Analysis", 
-    desc: "Detect vulnerabilities in code and runtime behavior using a powerful static and dynamic analysis engine.",
-    isInteractive: true 
-  },
-  { icon: Bot, title: "AI-Powered Fix Suggestions", desc: "Integrated AI assistant explains vulnerabilities and suggests smart, contextual code fixes." },
-  { icon: FileText, title: "Multi-format Report", desc: "Download your scan results as PDF, JSON, or CSV to document, share, or archive findings." },
-  { icon: Mail, title: "Email Alerts & Notifications", desc: "Get notified instantly when a scan finishes or a high-risk issue is discovered." },
-  { icon: AlertTriangle, title: "Risk Scoring & OWASP Mapping", desc: "Each issue is ranked by severity and mapped to OWASP Mobile Top 10 for industry relevance." },
-  { icon: Container, title: "CI/CD Integration", desc: "Push code, trigger scans, and receive results — right inside your DevOps pipeline." },
-  { icon: Key, title: "Secret & Key Detection", desc: "Automatically detects hardcoded secrets, API tokens, and sensitive data before release." },
-  { icon: Calendar, title: "Scheduled Weekly Scans", desc: "Regularly audit your apps for new common vulnerabilities and exposures (CVEs)." }
-];
-
-const stats = [
-  { label: "BROWSER BASED APK SCANNING", value: "100%", icon: Zap },
-  { label: "INTERESTED CLIENTS", value: "999+", icon: Users },
-  { label: "RELEVANT RISK SCORING YOU CAN ACT ON", value: "RELEVANT", icon: ShieldCheck },
-  { label: "SMARTER CODE REMEDIATION", value: "Ai", icon: Brain },
-];
-
-const featuredProjects = [
-  { id: 'upguard', name: 'Upguard Investar', desc: 'Financial security infrastructure' },
-  { id: 'inga', name: 'Inga Motors', desc: 'IoT automotive safety' },
-  { id: 'sigma', name: 'Onboarding with Sigma', desc: 'Enterprise data protection' },
-];
-
 function Home() {
-  const [expandedIndex, setExpandedIndex] = useState(null);
+  // 20 Floating particles
+  const particles = Array.from({ length: 20 });
 
   return (
-    <div className="flex flex-col">
+    <div className="min-h-screen bg-[#050508] text-white font-sans overflow-x-hidden selection:bg-[#E11D48]/30 selection:text-white relative">
+      <style>{`
+        @keyframes floatNode {
+          0%, 100% { transform: translateY(0px) translateX(0px); }
+          50% { transform: translateY(-20px) translateX(10px); }
+        }
+        .animate-float-node {
+          animation: floatNode 8s ease-in-out infinite;
+        }
+      `}</style>
+
       {/* Hero Section */}
-      <section className="relative min-h-[90vh] flex items-center px-6 overflow-hidden">
-        <div className="max-w-[1400px] mx-auto w-full grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+      <section className="relative min-h-[95vh] flex items-center px-6 overflow-hidden pt-12 pb-20">
+        
+        {/* Animated Particle Dots */}
+        <div className="absolute inset-0 pointer-events-none z-0 overflow-hidden">
+          {particles.map((_, i) => {
+            const size = Math.random() * 4 + 2;
+            const top = Math.random() * 100;
+            const left = Math.random() * 100;
+            const delay = Math.random() * 5;
+            const duration = Math.random() * 10 + 10;
+            return (
+              <div
+                key={i}
+                className="absolute rounded-full bg-[#E11D48] opacity-30"
+                style={{
+                  width: `${size}px`,
+                  height: `${size}px`,
+                  top: `${top}%`,
+                  left: `${left}%`,
+                  animation: `floatNode ${duration}s ease-in-out infinite`,
+                  animationDelay: `${delay}s`,
+                }}
+              />
+            );
+          })}
+        </div>
+
+        {/* Cyber Grid Background */}
+        <div 
+          className="absolute inset-0 pointer-events-none z-0" 
+          style={{
+            backgroundImage: 'linear-gradient(rgba(255,255,255,0.01) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.01) 1px, transparent 1px)',
+            backgroundSize: '40px 40px'
+          }}
+        />
+
+        <div className="max-w-[1400px] mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-12 items-center relative z-10">
+          
+          {/* Left Column Hero Headline */}
           <motion.div 
             initial={{ opacity: 0, x: -50 }}
-            whileInView={{ opacity: 1, x: 0 }}
-            viewport={{ once: true }}
-            className="z-10"
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.8 }}
+            className="lg:col-span-7 space-y-8"
           >
-            <h1 className="text-5xl md:text-7xl font-display font-extrabold leading-tight mb-6">
-              LAUNCH MOBILE APPS WITH <br />
-              <span className="text-brand-red">CONFIDENCE,</span> <br />
-              NOT VULNERABILITIES.
+            <h1 className="text-5xl md:text-7xl font-extrabold leading-none tracking-tight uppercase">
+              LAUNCH MOBILE <br />
+              APPS WITH <br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-white to-[#E11D48] filter drop-shadow-[0_0_20px_rgba(225,29,72,0.3)]">
+                CONFIDENCE.
+              </span>
             </h1>
-            <p className="text-gray-400 text-lg md:text-xl max-w-xl mb-10 leading-relaxed">
-              MobAudit is a mobile security platform that lets you upload APKs, run powerful static and dynamic scans, and download vulnerability reports in minutes. Built for developers.
+            
+            <p className="text-gray-400 text-lg md:text-xl max-w-xl leading-relaxed font-light">
+              MobAudit is the most advanced Android security platform. Upload any APK and get a complete security report in minutes.
             </p>
-            <Link 
-              to="/dashboard"
-              className="inline-block bg-transparent border-2 border-white hover:bg-white hover:text-black text-white font-bold px-10 py-4 rounded-sm transition-all text-sm tracking-widest"
-            >
-              START FREE SCAN
-            </Link>
+
+            <div className="flex flex-col sm:flex-row gap-4 pt-4">
+              <Link 
+                to="/dashboard"
+                style={{
+                  background: 'linear-gradient(135deg, #E11D48, #ff4d6d)',
+                  boxShadow: '0 0 25px rgba(225,29,72,0.35)'
+                }}
+                className="hover:scale-[1.03] text-white font-bold px-8 py-4 rounded-xl transition-all text-xs tracking-widest uppercase flex items-center justify-center gap-2 group"
+              >
+                START SCANNING
+                <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
+              </Link>
+              
+              <Link 
+                to="/dashboard"
+                className="bg-transparent border border-white/20 hover:border-white hover:bg-white/5 text-white font-bold px-8 py-4 rounded-xl transition-all text-xs tracking-widest uppercase flex items-center justify-center"
+              >
+                VIEW DASHBOARD
+              </Link>
+            </div>
           </motion.div>
 
+          {/* Right Column: Floating Premium Stats Card */}
           <motion.div 
-            initial={{ opacity: 0, scale: 0.8 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            className="relative"
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.8, delay: 0.2 }}
+            className="lg:col-span-5 relative"
           >
-            <div className="absolute inset-0 bg-brand-red/20 blur-[120px] rounded-full"></div>
-            <img 
-              src="https://images.unsplash.com/photo-1563986768609-322da13575f3?auto=format&fit=crop&q=80&w=1000" 
-              alt="Security Illustration" 
-              className="relative z-10 w-full max-w-[600px] mx-auto filter drop-shadow-[0_0_50px_rgba(255,31,31,0.2)] rounded-2xl"
-            />
+            {/* Soft pink glow behind card */}
+            <div className="absolute inset-0 bg-[#E11D48]/10 blur-[120px] rounded-full"></div>
+            
+            {/* The Floating Card */}
+            <div className="relative z-10 w-full max-w-[440px] mx-auto bg-[#0d0d14]/90 border border-white/10 p-8 rounded-3xl shadow-2xl backdrop-blur-md animate-float-node">
+              {/* Card top bar */}
+              <div className="flex justify-between items-center border-b border-white/5 pb-5 mb-6">
+                <span className="text-[10px] font-bold tracking-[0.25em] text-[#E11D48] uppercase">CORE SHIELD INTEL</span>
+                <span className="w-2.5 h-2.5 rounded-full bg-[#E11D48] animate-ping" />
+              </div>
+              
+              {/* Stats items list */}
+              <div className="space-y-5">
+                {[
+                  "68+ Antivirus Engines Reputation Check",
+                  "OWASP Top 10 Mobile Coverage Mapping",
+                  "AI-Powered Real-time Remediation suggestions",
+                  "Deep APK Static & Dynamic Analysis Vectors"
+                ].map((item, idx) => (
+                  <motion.div 
+                    key={idx}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: 0.4 + idx * 0.15 }}
+                    className="flex items-center gap-3.5"
+                  >
+                    <span className="text-green-500 text-sm font-bold bg-green-500/10 border border-green-500/20 w-6 h-6 rounded-full flex items-center justify-center shrink-0">✓</span>
+                    <span className="text-gray-300 text-sm font-bold tracking-wide">{item}</span>
+                  </motion.div>
+                ))}
+              </div>
+            </div>
           </motion.div>
+
         </div>
       </section>
-      
-      {/* Services Section */}
-      <section className="py-24 bg-brand-secondary/30">
-        <div className="max-w-[1400px] mx-auto px-6">
-          <div className="text-center mb-20">
-            <h2 className="text-4xl md:text-5xl font-display font-bold mb-4">
-              Our <span className="text-brand-red">Services</span>
+
+      {/* STATS BAR (Full Width Dark Strip) */}
+      <section className="bg-[#0a0a0f] border-y border-white/5 py-8 px-6">
+        <div className="max-w-[1400px] mx-auto grid grid-cols-2 lg:grid-cols-4 gap-8 lg:divide-x lg:divide-white/5 text-center">
+          {[
+            { icon: "🔍", title: "Static Analysis", desc: "Deep APK Scanning" },
+            { icon: "🦠", title: "VirusTotal Intel", desc: "68+ AV Engines Reputation" },
+            { icon: "🤖", title: "AI Fix Engine", desc: "Smart Vulnerability Remediation" },
+            { icon: "📊", title: "Risk Scoring", desc: "OWASP + MITRE ATT&CK Maps" }
+          ].map((stat, i) => (
+            <div key={i} className="flex flex-col items-center justify-center space-y-1.5 px-4">
+              <span className="text-3xl">{stat.icon}</span>
+              <h4 className="text-white font-bold text-sm tracking-wider">{stat.title}</h4>
+              <p className="text-gray-500 text-xs uppercase tracking-widest">{stat.desc}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* FEATURES SECTION (3x2 Grid) */}
+      <section className="py-28 px-6 bg-transparent">
+        <div className="max-w-[1400px] mx-auto">
+          
+          <div className="text-center mb-20 space-y-3">
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight uppercase">
+              Everything You Need to <span className="text-[#E11D48]">Secure Your App</span>
             </h2>
-            <p className="text-gray-500">We Provide End-to-End Android App Security Testing for Developers</p>
+            <p className="text-gray-500 text-xs font-bold tracking-widest uppercase">Comprehensive end-to-end vulnerability intelligence</p>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {services.map((s, i) => {
-              const isExpanded = expandedIndex === i;
-
-              return (
-                <div key={i} className="relative h-full">
-                  <motion.div 
-                    initial={{ opacity: 0, y: 20 }}
-                    whileInView={{ opacity: 1, y: 0 }}
-                    viewport={{ once: true }}
-                    transition={{ delay: i * 0.1 }}
-                    onClick={() => s.isInteractive && setExpandedIndex(isExpanded ? null : i)}
-                    className={`group bg-brand-secondary border h-full p-8 rounded-xl transition-all relative overflow-hidden flex flex-col ${
-                      s.isInteractive ? 'cursor-pointer' : ''
-                    } ${isExpanded ? 'border-brand-red ring-1 ring-brand-red/20' : 'border-brand-border hover:border-brand-red/50'}`}
-                  >
-                    <AnimatePresence mode="wait">
-                      {!isExpanded ? (
-                        <motion.div
-                          key="normal"
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                          className="flex flex-col h-full"
-                        >
-                          <div className="absolute top-4 right-4 text-brand-red opacity-0 group-hover:opacity-100 transition-opacity">
-                            <ArrowUpRight className="w-5 h-5" />
-                          </div>
-                          <div className="w-12 h-12 bg-white/5 rounded-lg flex items-center justify-center mb-6 group-hover:bg-brand-red/10 transition-colors">
-                            <s.icon className="text-brand-red w-6 h-6" />
-                          </div>
-                          <h3 className="text-xl font-bold mb-4 group-hover:text-brand-red transition-colors">{s.title}</h3>
-                          <p className="text-gray-400 leading-relaxed text-sm">{s.desc}</p>
-                        </motion.div>
-                      ) : (
-                        <motion.div
-                          key="options"
-                          initial={{ opacity: 0, scale: 0.95 }}
-                          animate={{ opacity: 1, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.95 }}
-                          className="flex flex-col h-full justify-center space-y-4"
-                        >
-                          <h4 className="text-sm font-bold tracking-widest text-brand-red mb-2 text-center">SELECT ANALYSIS TYPE</h4>
-                          
-                          <Link 
-                            to="/dashboard"
-                            className="flex items-center justify-between bg-brand-dark/50 hover:bg-brand-red text-white p-4 rounded-lg border border-brand-border hover:border-brand-red transition-all group/opt"
-                          >
-                            <div className="flex items-center space-x-3">
-                              <Scan className="w-5 h-5 text-brand-red group-hover/opt:text-white" />
-                              <span className="font-bold text-sm">Static Analysis</span>
-                            </div>
-                            <ChevronRight className="w-4 h-4" />
-                          </Link>
-
-                          <Link 
-                            to="/dashboard"
-                            className="flex items-center justify-between bg-brand-dark/50 hover:bg-brand-red text-white p-4 rounded-lg border border-brand-border hover:border-brand-red transition-all group/opt"
-                          >
-                            <div className="flex items-center space-x-3">
-                              <Activity className="w-5 h-5 text-brand-red group-hover/opt:text-white" />
-                              <span className="font-bold text-sm">Dynamic Analysis</span>
-                            </div>
-                            <ChevronRight className="w-4 h-4" />
-                          </Link>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-                  </motion.div>
+            {[
+              {
+                icon: "🔍",
+                title: "Static Analysis",
+                desc: "Decompile and scan APK source code, AndroidManifest files, sensitive resources, certificates, and hardcoded signatures."
+              },
+              {
+                icon: "⚡",
+                title: "Dynamic Analysis",
+                desc: "Monitor runtime environment behaviors, memory allocations, IPC calls, dynamic network payloads, and sandbox processes."
+              },
+              {
+                icon: "🦠",
+                title: "Threat Intelligence",
+                desc: "Cross-reference binary checksum hashes against the global VirusTotal engine checking database across 68+ distinct AV suppliers."
+              },
+              {
+                icon: "🤖",
+                title: "AI Fix Suggestions",
+                desc: "Generate prompt-driven, robust vulnerability remediation suggestions and code snippet replacements with our built-in GPT assistant."
+              },
+              {
+                icon: "🗺️",
+                title: "MITRE ATT&CK Mapping",
+                desc: "Directly contextualize discovered application flaws against standardized mobile threat catalogs and attacker playbooks."
+              },
+              {
+                icon: "📄",
+                title: "Professional Reports",
+                desc: "Instantly compile and export publication-ready reports (available as pristine PDF downloads, robust JSON files, or CSV models)."
+              }
+            ].map((feat, i) => (
+              <motion.div
+                key={i}
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: i * 0.08, duration: 0.5 }}
+                whileHover={{ y: -5, borderColor: 'rgba(225, 29, 72, 0.5)' }}
+                className="bg-[#0d0d14] border-l-4 border-l-[#E11D48] border-y border-r border-white/5 p-8 rounded-2xl transition-all duration-300 shadow-lg flex flex-col justify-between"
+              >
+                <div className="space-y-4">
+                  <span className="text-3xl block mb-2">{feat.icon}</span>
+                  <h3 className="text-lg font-bold text-white tracking-wide">{feat.title}</h3>
+                  <p className="text-gray-400 text-sm leading-relaxed font-light">{feat.desc}</p>
                 </div>
-              );
-            })}
+              </motion.div>
+            ))}
           </div>
+
         </div>
       </section>
 
-      {/* Why Us Section */}
-      <section className="py-24 border-y border-white/5">
-        <div className="max-w-[1400px] mx-auto px-6">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-20 items-center">
-            <div>
-              <h2 className="text-5xl md:text-6xl font-display font-bold mb-8">
-                Why <span className="text-brand-red">Us?</span>
-              </h2>
-              <p className="text-gray-400 text-lg leading-relaxed mb-12">
-                MobAudit makes Mobile app security fast, accessible, and developer-friendly. We combine powerful analysis tools with AI-assisted fixes, so you can scan, secure, and ship with confidence no security team required.
-              </p>
-            </div>
-            <div className="grid grid-cols-2 gap-10">
-              {stats.map((s, i) => (
-                <div key={i} className="flex flex-col space-y-2">
-                  <div className="flex items-center space-x-3 mb-2">
-                     <s.icon className="text-brand-red w-8 h-8" />
-                     <span className="text-4xl font-display font-bold">{s.value}</span>
-                  </div>
-                  <span className="text-xs font-bold tracking-widest text-gray-500 uppercase">{s.label}</span>
+      {/* WHY MOBAUDIT SECTION (Dark Red Gradient Background) */}
+      <section className="py-24 px-6 relative overflow-hidden bg-gradient-to-r from-[#0d0d14] via-[#20050b] to-[#0d0d14] border-y border-white/5">
+        <div className="max-w-[1400px] mx-auto grid grid-cols-1 lg:grid-cols-2 gap-16 items-center">
+          
+          <motion.div
+            initial={{ opacity: 0, x: -30 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true }}
+            transition={{ duration: 0.6 }}
+            className="space-y-6"
+          >
+            <h2 className="text-4xl md:text-5xl font-extrabold tracking-tight uppercase">
+              Why Choose <br /><span className="text-[#E11D48]">MobAudit?</span>
+            </h2>
+            <p className="text-gray-400 text-lg leading-relaxed font-light max-w-xl">
+              We eliminate technical overhead, long wait times, and exorbitant enterprise pricing. Enjoy top-tier binary audits instantly without the complexity.
+            </p>
+          </motion.div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-8">
+            {[
+              { icon: Zap, label: "Under 3 Minutes", val: "Results in under 3 minutes" },
+              { icon: Lock, label: "Secure Server Core", val: "APKs never leave your server environment" },
+              { icon: Target, label: "Zero Noise Tuning", val: "Zero false positive tuning heuristics" },
+              { icon: Gift, label: "Fair Model", val: "No per-scan pricing limits" }
+            ].map((item, idx) => (
+              <motion.div
+                key={idx}
+                initial={{ opacity: 0, y: 20 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true }}
+                transition={{ delay: idx * 0.1, duration: 0.5 }}
+                className="flex items-start gap-4"
+              >
+                <div className="w-10 h-10 rounded-xl bg-[#E11D48]/10 border border-[#E11D48]/20 flex items-center justify-center shrink-0">
+                  <item.icon className="text-[#E11D48] w-5 h-5" />
                 </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Featured Work Section */}
-      <section className="py-24">
-        <div className="max-w-[1400px] mx-auto px-6">
-          <div className="text-center mb-20">
-             <h2 className="text-5xl font-display font-bold mb-4">
-              Featured <span className="text-brand-red">Work</span>
-            </h2>
-            <p className="text-gray-500">Our team of creative professionals work in a collaborative fashion to craft tangible solutions.</p>
-          </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 items-start">
-            <div className="lg:col-span-4 space-y-12">
-              {featuredProjects.map((p, i) => (
-                <div key={i} className={`border-l-4 pl-8 py-2 transition-all ${i === 0 ? 'border-brand-red' : 'border-white/10 opacity-30 shadow-none'}`}>
-                  <h3 className={`text-2xl font-bold mb-2 ${i === 0 ? 'text-brand-red' : ''}`}>{p.name}</h3>
-                  <p className="text-sm font-medium underline underline-offset-8 decoration-gray-700">Case Study</p>
-                </div>
-              ))}
-            </div>
-            <div className="lg:col-span-8 bg-brand-secondary border border-brand-border rounded-2xl overflow-hidden shadow-2xl shadow-brand-red/5">
-              <img 
-                src="https://images.unsplash.com/photo-1460925895917-afdab827c52f?auto=format&fit=crop&q=80&w=1500" 
-                alt="Featured Project" 
-                className="w-full h-auto object-cover"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Innovation CTA */}
-      <section className="px-6 py-12">
-        <div className="max-w-[1200px] mx-auto bg-brand-secondary border border-brand-border rounded-2xl p-12 flex flex-col md:flex-row items-center justify-between gap-8 relative overflow-hidden group">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-brand-red/5 blur-3xl group-hover:bg-brand-red/10 transition-all"></div>
-          <div className="relative z-10 max-w-xl">
-            <h2 className="text-4xl font-display font-bold mb-4">
-              Ready to <span className="text-brand-red">Innovate</span>
-            </h2>
-            <p className="text-gray-400">Contact us to schedule an in-depth discussion about your project to find out how we can fulfil your technical needs!</p>
-          </div>
-          <button className="relative z-10 border border-white hover:bg-white hover:text-black text-white px-8 py-3 rounded-md flex items-center space-x-3 transition-all">
-            <span className="font-bold text-sm tracking-widest">LET'S CONNECT</span>
-            <ArrowUpRight className="w-5 h-5" />
-          </button>
-        </div>
-      </section>
-
-      {/* Customers Section */}
-      <section className="py-24 bg-[url('https://upload.wikimedia.org/wikipedia/commons/e/ec/World_map_blank_without_borders.svg')] bg-center bg-no-repeat bg-contain bg-fixed opacity-80 filter invert grayscale">
-        <div className="max-w-[1400px] mx-auto px-6">
-          <div className="text-center mb-16">
-            <h2 className="text-5xl font-display font-bold mb-10">
-              Our <span className="text-brand-red">Customer</span>
-            </h2>
-            <div className="flex justify-center space-x-6">
-              <span className="flex items-center space-x-2 text-sm font-medium">
-                <span className="w-3 h-3 bg-white rounded-full"></span>
-                <span className="text-gray-300">Satisfied customers</span>
-              </span>
-              <span className="flex items-center space-x-2 text-sm font-medium">
-                <span className="w-3 h-3 bg-brand-red rounded-full"></span>
-                <span className="text-gray-300">customers reviews</span>
-              </span>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 max-w-4xl mx-auto">
-            <div className="bg-brand-secondary p-8 rounded-2xl border border-brand-border shadow-xl">
-              <span className="text-brand-red text-6xl font-serif block mb-4 opacity-50">“</span>
-              <p className="text-gray-300 mb-8 italic">I am very proud of the team at MobAudit, they are a very smart group of people and I highly recommend them.</p>
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 bg-gray-700 rounded-full"></div>
                 <div>
-                  <h4 className="font-bold text-brand-red">Asghar Hussain</h4>
-                  <p className="text-xs text-gray-500">Co-founder & CEO, HA ENG CON INTERNATIONAL</p>
+                  <h4 className="text-white font-bold text-sm uppercase tracking-wider mb-1">{item.label}</h4>
+                  <p className="text-gray-400 text-xs leading-relaxed">{item.val}</p>
                 </div>
-              </div>
-            </div>
-            <div className="bg-brand-secondary p-8 rounded-2xl border border-brand-border shadow-xl">
-               <span className="text-brand-red text-6xl font-serif block mb-4 opacity-50">“</span>
-              <p className="text-gray-300 mb-8 italic">I am very proud of the team at MobAudit, they are a very smart group of people and I highly recommend them.</p>
-              <div className="flex items-center space-x-4">
-                <div className="w-12 h-12 bg-gray-700 rounded-full"></div>
-                <div>
-                  <h4 className="font-bold text-brand-red">Tilly Firth</h4>
-                  <p className="text-xs text-gray-500">Co-founder & CEO, Impala</p>
-                </div>
-              </div>
-            </div>
+              </motion.div>
+            ))}
           </div>
+
         </div>
       </section>
 
-      {/* Footer */}
-      <footer className="py-12 border-t border-white/5 bg-brand-secondary/50">
+      {/* FOOTER */}
+      <footer className="py-12 border-t border-white/5 bg-[#07070a]">
         <div className="max-w-[1400px] mx-auto px-6 flex flex-col md:flex-row justify-between items-center gap-6">
-          <Link to="/" className="flex items-center space-x-2">
-            <span className="text-brand-red text-2xl font-display font-bold">M</span>
-            <span className="text-white text-lg font-display font-extrabold tracking-widest italic">MOBAUDIT</span>
+          <Link to="/" className="flex items-center">
+            <img src="/logo.png" alt="MobAudit" style={{ width: '130px' }} className="drop-shadow-[0_0_10px_rgba(255,255,255,0.05)]" />
           </Link>
-          <p className="text-gray-500 text-sm">© 2026 MOBAUDIT. All Rights Reserved.</p>
+          <p className="text-gray-500 text-xs font-mono font-bold tracking-widest uppercase">
+            © 2026 MobAudit. All rights reserved.
+          </p>
         </div>
       </footer>
+
     </div>
   );
 }
