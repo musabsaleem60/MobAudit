@@ -161,9 +161,15 @@ function Report({ reportData }) {
   const [vtData, setVtData] = useState(null);
   
   // Dynamic Analysis State
-  const [dynamicStatus, setDynamicStatus] = useState("not_started"); 
+  const [dynamicStatus, setDynamicStatus] = useState(report?.dynamic_status || 'not_started'); 
   const [dynamicError, setDynamicError] = useState(null);
   const [dynamicData, setDynamicData] = useState(null);
+
+  const [screenFrame, setScreenFrame] = useState(null);
+  const [logLines, setLogLines] = useState([]);
+  const [wsConnected, setWsConnected] = useState(false);
+  const [screenWs, setScreenWs] = useState(null);
+  const [logWs, setLogWs] = useState(null);
 
   const currentDynamicData = dynamicData || report?.dynamic;
   const hasDynamicData = !!(currentDynamicData && (
@@ -172,6 +178,37 @@ function Report({ reportData }) {
   ));
 
   const navigate = useNavigate();
+  const hash = reportData?.hash || report?.hash || (localStorage.getItem("lastScanResult") ? JSON.parse(localStorage.getItem("lastScanResult")).hash : null);
+
+  useEffect(() => {
+    if (report?.dynamic_status) {
+      setDynamicStatus(report.dynamic_status);
+    }
+  }, [report]);
+
+  const startLiveStream = () => {
+    const sws = new WebSocket(`ws://${window.location.hostname}:5002?type=screen`);
+    sws.onopen = () => setWsConnected(true);
+    sws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'screen') setScreenFrame(msg.data);
+    };
+    sws.onclose = () => setWsConnected(false);
+    setScreenWs(sws);
+    const lws = new WebSocket(`ws://${window.location.hostname}:5002?type=logs`);
+    lws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'log') setLogLines(prev => [msg.data, ...prev].slice(0, 150));
+    };
+    setLogWs(lws);
+  };
+
+  const stopLiveStream = () => {
+    if (screenWs) screenWs.close();
+    if (logWs) logWs.close();
+    setWsConnected(false);
+    setScreenFrame(null);
+  };
 
   useEffect(() => {
     const fetchReport = async () => {
@@ -311,6 +348,36 @@ function Report({ reportData }) {
          setDynamicError("Network error attempting to start dynamic analysis. Ensure ADB emulator is running.");
          setDynamicStatus("error");
       }
+  };
+
+  const connectLiveScreen = () => {
+    // Screen WebSocket
+    const sws = new WebSocket('ws://localhost:5002?type=screen');
+    sws.onopen = () => { setWsConnected(true); console.log('[WS] Screen connected'); };
+    sws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'screen') setScreenFrame(msg.data);
+    };
+    sws.onclose = () => { setWsConnected(false); };
+    setScreenWs(sws);
+
+    // Log WebSocket
+    const lws = new WebSocket('ws://localhost:5002?type=logs');
+    lws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'log') {
+        setLogLines(prev => [msg.data, ...prev].slice(0, 100));
+      }
+    };
+    setLogWs(lws);
+  };
+
+  const disconnectLiveScreen = () => {
+    if (screenWs) screenWs.close();
+    if (logWs) logWs.close();
+    setWsConnected(false);
+    setScreenFrame(null);
+    setLogLines([]);
   };
 
   const viewCode = async (filePath) => {
@@ -1088,123 +1155,372 @@ function Report({ reportData }) {
               )}
             </motion.div>
           )}
+               {activeTab === 'dynamic' && (
+  <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
 
-          {activeTab === "dynamic" && (
-            <motion.div 
-              key="dynamic"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -10 }}
-              className="space-y-8"
-            >
-              {(dynamicStatus !== "completed" || !hasDynamicData) && (
-                <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl flex flex-col pt-12 items-center text-center">
-                   {(dynamicStatus === "not_started" || (dynamicStatus === "completed" && !hasDynamicData)) && (
-                      <>
-                         <Smartphone className="w-16 h-16 text-gray-500 mb-6" />
-                         <h3 className="text-2xl font-bold text-white mb-4">Run Dynamic Analysis</h3>
-                         <p className="text-sm text-gray-400 max-w-lg mb-8 leading-relaxed">
-                           Automated dynamic analysis requires an active emulator connected via ADB. This will install the APK, attach FRIDA instrumentation, and actively execute the app to capture real-time behavior, API calls, and HTTP logs over 40 seconds.
-                         </p>
-                         <button 
-                            onClick={startDynamicAnalysis}
-                            className="bg-brand-red text-white py-3 px-8 rounded-xl font-bold tracking-wider hover:bg-brand-red/90 transition-colors uppercase"
-                         >
-                            Initiate Execution Trace
-                         </button>
-                      </>
-                   )}
+    {/* ===== NOT STARTED STATE ===== */}
+    {dynamicStatus === 'not_started' && (
+      <div style={{ textAlign: 'center', padding: '60px 20px' }}>
+        <div style={{ fontSize: '72px', marginBottom: '24px' }}>📱</div>
+        <h3 style={{ color: '#fff', fontSize: '22px', fontWeight: '800', marginBottom: '12px' }}>
+          Start Dynamic Analysis
+        </h3>
+        <p style={{ color: '#555', fontSize: '14px', marginBottom: '32px', maxWidth: '500px', margin: '0 auto 32px' }}>
+          Runtime behavior monitoring using Android emulator. Make sure GenyMotion is running before starting.
+        </p>
+        <button
+          onClick={async () => {
+            setDynamicStatus('running');
+            startLiveStream();
+            try {
+              const token = localStorage.getItem('mobaudit_token');
+              await fetch(`http://${window.location.hostname}:5001/api/analyze/dynamic/${hash}`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${token}` }
+              });
+              // Start polling every 5 seconds
+              let pollCount = 0;
+              const poll = setInterval(async () => {
+                pollCount++;
+                console.log('[POLL] Checking status... attempt', pollCount);
+                try {
+                  const token = localStorage.getItem('mobaudit_token');
+                  const r = await fetch(
+                    `http://${window.location.hostname}:5001/api/analyze/dynamic/${hash}/status`,
+                    { headers: { 'Authorization': `Bearer ${token}` } }
+                  );
+                  const data = await r.json();
+                  console.log('[POLL] Status:', data.status);
 
-                   {dynamicStatus === "running" && (
-                      <div className="flex flex-col items-center">
-                         <Loader2 className="w-16 h-16 animate-spin text-brand-red mb-6" />
-                         <h3 className="text-2xl font-bold text-white mb-2 blink">Executing Application</h3>
-                         <p className="text-xs text-brand-red tracking-widest font-mono uppercase mb-8">
-                           [ADB] Injecting Instrumentation Hook...
-                         </p>
-                         <div className="w-full max-w-sm h-1 bg-brand-dark rounded-full overflow-hidden">
-                            <motion.div 
-                              initial={{ width: "0%" }}
-                              animate={{ width: "100%" }}
-                              transition={{ duration: 40, ease: "linear" }}
-                              className="h-full bg-brand-red"
-                            />
-                         </div>
-                      </div>
-                   )}
+                  if (data.status === 'completed' || data.status === 'error') {
+                    clearInterval(poll);
+                    stopLiveStream();
 
-                   {dynamicStatus === "error" && (
-                      <>
-                         <AlertCircle className="w-16 h-16 text-brand-red mb-6" />
-                         <h3 className="text-2xl font-bold text-white mb-4">Execution Failed</h3>
-                         <p className="text-sm text-brand-red max-w-lg mb-8">{dynamicError || "The emulator disconnected or an unknown trace failure occurred."}</p>
-                         <button onClick={startDynamicAnalysis} className="border border-brand-red text-brand-red py-2 px-6 rounded-xl font-bold hover:bg-brand-red/10 transition-colors">RETRY</button>
-                      </>
-                   )}
+                    // Fetch updated report
+                    const reportRes = await fetch(
+                      `http://${window.location.hostname}:5001/api/report/${hash}`,
+                      { headers: { 'Authorization': `Bearer ${token}` } }
+                    );
+                    const reportData = await reportRes.json();
+                    setReport(reportData);
+                    setDynamicStatus('completed');
+                  }
+
+                  // Stop polling after 3 minutes max
+                  if (pollCount > 36) {
+                    clearInterval(poll);
+                    setDynamicStatus('completed');
+                    stopLiveStream();
+                  }
+                } catch(err) {
+                  console.error('[POLL] Error:', err);
+                  // If connection reset, wait and retry - server may be restarting
+                  await new Promise(resolve => setTimeout(resolve, 3000));
+                }
+              }, 5000);
+            } catch(err) {
+              console.error(err);
+              setDynamicStatus('not_started');
+              stopLiveStream();
+            }
+          }}
+          style={{
+            background: 'linear-gradient(135deg, #E11D48, #ff4d6d)',
+            border: 'none', color: '#fff',
+            padding: '16px 48px', borderRadius: '12px',
+            cursor: 'pointer', fontSize: '15px', fontWeight: '800',
+            letterSpacing: '1px',
+            boxShadow: '0 8px 30px rgba(225,29,72,0.4)',
+          }}
+        >
+          ▶ START DYNAMIC ANALYSIS
+        </button>
+        <p style={{ color: '#333', fontSize: '12px', marginTop: '16px' }}>
+          Analysis takes approximately 40-60 seconds
+        </p>
+      </div>
+    )}
+
+    {/* ===== RUNNING STATE - Live Screen + Steps ===== */}
+    {dynamicStatus === 'running' && (
+      <div>
+        {/* Running header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '12px',
+          marginBottom: '24px', padding: '14px 20px',
+          background: 'rgba(225,29,72,0.08)',
+          border: '1px solid rgba(225,29,72,0.25)',
+          borderRadius: '12px',
+        }}>
+          <div style={{
+            width: '10px', height: '10px', borderRadius: '50%',
+            background: '#E11D48',
+            boxShadow: '0 0 10px #E11D48',
+          }} />
+          <span style={{ color: '#E11D48', fontWeight: '700', fontSize: '14px' }}>
+            DYNAMIC ANALYSIS IN PROGRESS
+          </span>
+          <span style={{ color: '#555', fontSize: '12px', marginLeft: 'auto' }}>
+            ~40 seconds remaining
+          </span>
+        </div>
+
+        {/* Live screen + steps grid */}
+        <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: '24px' }}>
+
+          {/* Phone mockup */}
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+            <p style={{ color: '#E11D48', fontSize: '10px', letterSpacing: '2px', marginBottom: '14px', fontWeight: '700' }}>
+              ● LIVE DEVICE
+            </p>
+            <div style={{
+              background: '#111', border: '3px solid #2a2a2a',
+              borderRadius: '32px', padding: '14px 10px',
+              boxShadow: '0 0 40px rgba(225,29,72,0.2)',
+              width: '220px',
+            }}>
+              <div style={{ width: '50px', height: '5px', background: '#2a2a2a', borderRadius: '3px', margin: '0 auto 10px' }} />
+              <div style={{
+                background: '#000', borderRadius: '14px',
+                overflow: 'hidden', aspectRatio: '9/16',
+                border: '1px solid #1a1a1a',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+                {screenFrame ? (
+                  <img src={`data:image/png;base64,${screenFrame}`}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }} alt="Live" />
+                ) : (
+                  <div style={{ textAlign: 'center', padding: '20px' }}>
+                    <div style={{ fontSize: '28px' }}>📱</div>
+                    <p style={{ color: '#333', fontSize: '10px', marginTop: '8px' }}>Connecting...</p>
+                  </div>
+                )}
+              </div>
+              <div style={{ width: '36px', height: '36px', border: '2px solid #2a2a2a', borderRadius: '50%', margin: '10px auto 0' }} />
+            </div>
+            {wsConnected && (
+              <p style={{ color: '#10B981', fontSize: '10px', marginTop: '10px' }}>● LIVE • ~1.2 fps</p>
+            )}
+          </div>
+
+          {/* Steps + Logs */}
+          <div>
+            <p style={{ color: '#666', fontSize: '10px', letterSpacing: '2px', marginBottom: '12px' }}>
+              ANALYSIS PIPELINE
+            </p>
+            {[
+              { label: 'APK Installed on Device', done: true },
+              { label: 'Runtime Environment Ready', done: true },
+              { label: 'Network Monitoring Active', done: wsConnected },
+              { label: 'SQLite & Storage Scanning', done: wsConnected },
+              { label: 'Collecting Runtime Data (40s)', done: false, active: true },
+              { label: 'Generating Final Report', done: false },
+            ].map((s, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', gap: '10px',
+                padding: '10px 14px', marginBottom: '6px',
+                background: s.active ? 'rgba(225,29,72,0.08)' : s.done ? 'rgba(16,185,129,0.05)' : 'rgba(255,255,255,0.02)',
+                border: `1px solid ${s.active ? 'rgba(225,29,72,0.2)' : s.done ? 'rgba(16,185,129,0.12)' : 'rgba(255,255,255,0.04)'}`,
+                borderRadius: '8px',
+              }}>
+                <span style={{ fontSize: '14px' }}>
+                  {s.done ? '✅' : s.active ? '⚙️' : '⏳'}
+                </span>
+                <span style={{
+                  color: s.done ? '#10B981' : s.active ? '#E11D48' : '#444',
+                  fontSize: '12px', fontWeight: s.active ? '700' : '400'
+                }}>
+                  {s.label}
+                </span>
+              </div>
+            ))}
+
+            {/* Live logs */}
+            <div style={{
+              marginTop: '14px', background: '#050508',
+              border: '1px solid rgba(255,255,255,0.05)',
+              borderRadius: '10px', padding: '12px',
+              height: '170px', overflowY: 'auto',
+              fontFamily: 'monospace', fontSize: '10px',
+            }}>
+              <p style={{ color: '#333', fontSize: '10px', marginBottom: '6px', letterSpacing: '1px' }}>
+                DEVICE LOGS
+              </p>
+              {logLines.length === 0 ? (
+                <p style={{ color: '#2a2a2a' }}>Waiting for device logs...</p>
+              ) : logLines.map((line, i) => (
+                <div key={i} style={{
+                  color: line.includes('E/') ? '#E11D48' : line.includes('W/') ? '#F59E0B' : '#2a2a3a',
+                  padding: '1px 0', lineHeight: '1.5',
+                }}>{line}</div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {/* ===== COMPLETED STATE - Results ===== */}
+    {dynamicStatus === 'completed' && (
+      <div>
+        {/* Completed badge */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: '10px',
+          marginBottom: '24px', padding: '12px 20px',
+          background: 'rgba(16,185,129,0.08)',
+          border: '1px solid rgba(16,185,129,0.2)',
+          borderRadius: '12px',
+        }}>
+          <span style={{ fontSize: '18px' }}>✅</span>
+          <span style={{ color: '#10B981', fontWeight: '700', fontSize: '14px' }}>
+            Dynamic Analysis Complete
+          </span>
+          <button
+            onClick={async () => {
+              try {
+                const token = localStorage.getItem('mobaudit_token');
+                // Reset in MongoDB
+                await fetch(`http://${window.location.hostname}:5001/api/analyze/dynamic/${hash}/reset`, {
+                  method: 'POST',
+                  headers: { 'Authorization': `Bearer ${token}` }
+                });
+              } catch(e) {}
+              setDynamicStatus('not_started');
+              setReport(prev => ({ ...prev, dynamic: null }));
+            }}
+            style={{
+              marginLeft: 'auto', background: 'transparent',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#666', padding: '4px 14px',
+              borderRadius: '6px', cursor: 'pointer', fontSize: '11px',
+            }}
+          >
+            🔄 Re-run Analysis
+          </button>
+        </div>
+
+        {/* Stats Row */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '12px', marginBottom: '24px' }}>
+          {[
+            { icon: '🌐', label: 'Domains', value: report?.dynamic?.domains?.length || 0, color: '#3B82F6' },
+            { icon: '🗄️', label: 'SQLite DBs', value: report?.dynamic?.sqlite_databases?.length || 0, color: '#F59E0B' },
+            { icon: '📡', label: 'URLs Found', value: report?.dynamic?.urls?.length || 0, color: '#10B981' },
+            { icon: '🔍', label: 'Trackers', value: typeof report?.dynamic?.trackers === 'object' ? (report?.dynamic?.trackers?.detected_trackers || 0) : (report?.dynamic?.trackers || 0), color: '#E11D48' },
+          ].map((stat, i) => (
+            <div key={i} style={{
+              background: '#0d0d14', border: '1px solid rgba(255,255,255,0.06)',
+              borderRadius: '12px', padding: '20px', textAlign: 'center',
+            }}>
+              <div style={{ fontSize: '28px', marginBottom: '10px' }}>{stat.icon}</div>
+              <div style={{ color: stat.color, fontSize: '28px', fontWeight: '800' }}>{stat.value}</div>
+              <div style={{ color: '#444', fontSize: '11px', marginTop: '6px' }}>{stat.label}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Network Domains */}
+        {report?.dynamic?.domains?.length > 0 && (
+          <div style={{ marginBottom: '16px', background: '#0d0d14', border: '1px solid rgba(59,130,246,0.15)', borderRadius: '12px', padding: '20px' }}>
+            <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '700', marginBottom: '14px' }}>
+              🌐 NETWORK DOMAINS CONTACTED
+            </h3>
+            {report.dynamic.domains.map((domain, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', marginBottom: '5px',
+                background: 'rgba(255,255,255,0.02)', borderRadius: '8px',
+                border: '1px solid rgba(255,255,255,0.04)',
+              }}>
+                <span style={{ color: '#ccc', fontSize: '13px', fontFamily: 'monospace' }}>{domain}</span>
+                <span style={{ color: '#10B981', fontSize: '10px', background: 'rgba(16,185,129,0.1)', padding: '3px 10px', borderRadius: '999px' }}>
+                  CONTACTED
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* SQLite */}
+        {report?.dynamic?.sqlite_databases?.length > 0 && (
+          <div style={{ marginBottom: '16px', background: '#0d0d14', border: '1px solid rgba(245,158,11,0.15)', borderRadius: '12px', padding: '20px' }}>
+            <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '700', marginBottom: '14px' }}>
+              🗄️ SQLITE DATABASES ACCESSED
+            </h3>
+            {report.dynamic.sqlite_databases.map((db, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', marginBottom: '5px',
+                background: 'rgba(245,158,11,0.04)', border: '1px solid rgba(245,158,11,0.12)',
+                borderRadius: '8px',
+              }}>
+                <div>
+                  <div style={{ color: '#ccc', fontSize: '13px', fontFamily: 'monospace', fontWeight: '600' }}>
+                    {typeof db === 'string' ? db : db.file ? db.file.split('/').pop() : JSON.stringify(db)}
+                  </div>
+                  {typeof db !== 'string' && db.file && (
+                    <div style={{ color: '#555', fontSize: '10px', marginTop: '2px', fontFamily: 'monospace' }}>{db.file}</div>
+                  )}
                 </div>
-              )}
+                <span style={{ color: '#F59E0B', fontSize: '10px', background: 'rgba(245,158,11,0.1)', padding: '3px 10px', borderRadius: '999px' }}>
+                  ACCESSED
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
 
-              {dynamicStatus === "completed" && hasDynamicData && (
-                 <div className="space-y-6">
-                    <div className="flex justify-between items-center bg-brand-secondary/50 p-6 rounded-2xl border border-brand-border">
-                       <div>
-                          <h2 className="text-xl font-display font-bold text-white flex items-center">
-                             <CheckCircle2 className="w-6 h-6 mr-3 text-green-500" />
-                             Dynamic Trace Results
-                          </h2>
-                          <p className="text-gray-500 text-xs mt-1 font-mono">Real-time application execution traces captured successfully.</p>
-                       </div>
-                       <button 
-                          onClick={startDynamicAnalysis}
-                          className="bg-brand-red text-white py-2.5 px-6 rounded-xl font-bold tracking-wider hover:bg-brand-red/90 transition-colors uppercase text-xs flex items-center"
-                       >
-                          <RefreshCw className="w-4 h-4 mr-2" /> Re-run Analysis
-                       </button>
-                    </div>
+        {/* URLs */}
+        {report?.dynamic?.urls?.length > 0 && (
+          <div style={{ marginBottom: '16px', background: '#0d0d14', border: '1px solid rgba(16,185,129,0.15)', borderRadius: '12px', padding: '20px' }}>
+            <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '700', marginBottom: '14px' }}>
+              📡 URLS INTERCEPTED
+            </h3>
+            {report.dynamic.urls.slice(0, 20).map((url, i) => (
+              <div key={i} style={{
+                padding: '8px 14px', marginBottom: '5px',
+                background: 'rgba(16,185,129,0.04)', border: '1px solid rgba(16,185,129,0.1)',
+                borderRadius: '8px', fontFamily: 'monospace', fontSize: '11px',
+                color: '#10B981', wordBreak: 'break-all',
+              }}>
+                {typeof url === 'string' ? url : url.url || JSON.stringify(url)}
+              </div>
+            ))}
+          </div>
+        )}
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                       <div className="bg-brand-secondary border border-brand-border p-6 rounded-2xl relative overflow-hidden group">
-                          <h3 className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-6 flex items-center">
-                             <Globe className="w-4 h-4 mr-2 text-brand-red" />
-                             Network Traffic Log
-                          </h3>
-                          <div className="space-y-4 max-h-96 overflow-auto custom-scrollbar pr-2">
-                             {currentDynamicData.domains && Object.keys(currentDynamicData.domains).length > 0 ? (
-                                Object.keys(currentDynamicData.domains).map((domain, i) => (
-                                   <div key={i} className="bg-brand-dark border border-white/5 p-4 rounded-xl font-mono text-xs text-gray-300 flex justify-between items-center group-hover:border-brand-red/30 transition-colors">
-                                      <span className="truncate">{domain}</span>
-                                      <span className="bg-brand-red/20 text-brand-red px-2 py-1 rounded text-[10px] font-bold">CONTACTED</span>
-                                   </div>
-                                ))
-                             ) : (
-                                <p className="text-sm text-gray-500 text-center py-10">No external network domains contacted during trace.</p>
-                             )}
-                          </div>
-                       </div>
+        {/* Trackers */}
+        <div style={{ background: '#0d0d14', border: '1px solid rgba(255,255,255,0.06)', borderRadius: '12px', padding: '20px' }}>
+          <h3 style={{ color: '#fff', fontSize: '14px', fontWeight: '700', marginBottom: '12px' }}>
+            🔍 TRACKER DETECTION
+          </h3>
+          {(() => {
+            const t = report?.dynamic?.trackers;
+            const count = typeof t === 'object' ? (t?.detected_trackers || 0) : (t || 0);
+            return count === 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '14px', background: 'rgba(16,185,129,0.06)', borderRadius: '8px' }}>
+                <span style={{ fontSize: '18px' }}>✅</span>
+                <span style={{ color: '#10B981', fontSize: '13px' }}>No trackers detected during runtime analysis</span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '14px', background: 'rgba(225,29,72,0.06)', borderRadius: '8px' }}>
+                <span style={{ fontSize: '18px' }}>🚨</span>
+                <span style={{ color: '#E11D48', fontSize: '13px' }}>{count} tracker(s) detected</span>
+              </div>
+            );
+          })()}
+        </div>
 
-                       <div className="bg-brand-secondary border border-brand-border p-6 rounded-2xl relative overflow-hidden group">
-                          <h3 className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-6 flex items-center">
-                             <FileCode className="w-4 h-4 mr-2 text-yellow-500" />
-                             Intercepted API/Java Hooks
-                          </h3>
-                          <div className="space-y-4 max-h-96 overflow-auto custom-scrollbar pr-2">
-                             {currentDynamicData.api_monitor && currentDynamicData.api_monitor.length > 0 ? (
-                                currentDynamicData.api_monitor.slice(0, 50).map((api, i) => (
-                                   <div key={i} className="bg-brand-dark border border-white/5 p-4 rounded-xl text-xs text-gray-400 group-hover:border-yellow-500/30 transition-colors flex flex-col">
-                                      <strong className="text-white mb-1">{api.class}</strong>
-                                      <span className="font-mono text-[10px] text-yellow-500">{api.method}()</span>
-                                   </div>
-                                ))
-                             ) : (
-                                <p className="text-sm text-gray-500 text-center py-10">No suspicious API calls routed via Frida instrumentation.</p>
-                             )}
-                          </div>
-                       </div>
-                    </div>
-                 </div>
-              )}
-            </motion.div>
-          )}
+        {/* Empty state */}
+        {!report?.dynamic?.domains?.length && !report?.dynamic?.sqlite_databases?.length && !report?.dynamic?.urls?.length && (
+          <div style={{ textAlign: 'center', padding: '30px', color: '#333', marginTop: '16px' }}>
+            <p style={{ fontSize: '13px' }}>Limited runtime data captured. Try interacting with the app in GenyMotion during analysis.</p>
+          </div>
+        )}
+      </div>
+    )}
+
+  </motion.div>
+)}
 
           {activeTab === "mitre" && (
             <motion.div 

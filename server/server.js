@@ -6,7 +6,8 @@ const FormData = require("form-data");
 const fs = require("fs");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const { execSync, exec } = require('child_process');
+const { execSync, exec, spawn } = require('child_process');
+const WebSocket = require('ws');
 const AdmZip = require('adm-zip');
 const xml2js = require('xml2js');
 const crypto = require("crypto");
@@ -20,6 +21,87 @@ const JWT_SECRET = process.env.JWT_SECRET || 'mobaudit_jwt_secret_2024';
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+const wss = new WebSocket.Server({ port: 5002 });
+console.log('📱 Screen streaming WebSocket on port 5002');
+
+const ADB_PATH = 'C:\\Program Files\\Genymobile\\Genymotion\\tools\\adb.exe';
+const DEVICE = '192.168.174.101:5555';
+
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url, 'http://localhost');
+  const streamType = url.searchParams.get('type') || 'screen';
+  
+  console.log(`[WS] Client connected - type: ${streamType}`);
+
+  if (streamType === 'screen') {
+    // Screen streaming loop
+    let streaming = true;
+    
+    const streamScreen = async () => {
+      while (streaming && ws.readyState === WebSocket.OPEN) {
+        try {
+          execSync(`"${ADB_PATH}" -s ${DEVICE} shell screencap -p /sdcard/ws_screen.png`, { timeout: 5000, stdio: 'pipe' });
+          execSync(`"${ADB_PATH}" -s ${DEVICE} pull /sdcard/ws_screen.png C:\\temp\\ws_screen.png`, { timeout: 5000, stdio: 'pipe' });
+          
+          const fs = require('fs');
+          if (fs.existsSync('C:\\temp\\ws_screen.png')) {
+            const imageData = fs.readFileSync('C:\\temp\\ws_screen.png');
+            const base64 = imageData.toString('base64');
+            if (ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'screen', data: base64, timestamp: Date.now() }));
+            }
+          }
+        } catch(err) {
+          // Silently ignore screen capture errors - don't crash server
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        // Wait 800ms between frames
+        await new Promise(resolve => setTimeout(resolve, 800));
+      }
+    };
+    
+    streamScreen();
+    
+    ws.on('close', () => {
+      streaming = false;
+      console.log('[WS] Screen stream client disconnected');
+    });
+
+  } else if (streamType === 'logs') {
+    // Logcat streaming
+    let logProcess;
+    try {
+      logProcess = spawn(`"${ADB_PATH}"`, ['-s', DEVICE, 'logcat', '-v', 'time', '*:W'], {
+        shell: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+
+      logProcess.stdout.on('data', (data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const lines = data.toString().split('\n').filter(l => l.trim());
+          lines.forEach(line => {
+            ws.send(JSON.stringify({ type: 'log', data: line, timestamp: Date.now() }));
+          });
+        }
+      });
+
+      logProcess.stderr.on('data', (data) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'log', data: data.toString(), timestamp: Date.now() }));
+        }
+      });
+    } catch(err) {
+      console.log('[WS] Logcat error:', err.message);
+    }
+
+    ws.on('close', () => {
+      if (logProcess) logProcess.kill();
+      console.log('[WS] Log stream client disconnected');
+    });
+  }
+});
 
 const MOBSF_API_KEY = (process.env.MOBSF_API_KEY || "").replace(/\x1b\[[0-9;]*m/g, "").trim();
 const MOBSF_URL = process.env.MOBSF_BASE_URL;
@@ -933,7 +1015,25 @@ app.get("/api/report/:hash", authenticateJWT, async (req, res) => {
     
     // Attach dynamic data if available
     if (report.dynamic_report_data) {
-      parsedReport.dynamic = report.dynamic_report_data;
+      const dynRaw = report.dynamic_report_data;
+      parsedReport.dynamic = {
+        // Network data
+        urls: dynRaw.urls || [],
+        emails: dynRaw.emails || [],
+        domains: Object.keys(dynRaw.domains || {}),
+        // Storage
+        sqlite_databases: dynRaw.sqlite || [],
+        // Trackers
+        trackers: dynRaw.trackers || 0,
+        tracker_details: dynRaw.tracker_details || [],
+        // Screenshots
+        screenshots: dynRaw.screenshots || [],
+        // Frida/API hooks
+        api_calls: dynRaw.apimon || {},
+        frida_logs: dynRaw.frida_logs || false,
+        // Raw for fallback
+        raw: dynRaw
+      };
     }
 
     res.json(parsedReport);
@@ -1990,6 +2090,19 @@ app.get("/api/analyze/dynamic/:hash/status", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch status" });
+  }
+});
+
+app.post("/api/analyze/dynamic/:hash/reset", authenticateJWT, async (req, res) => {
+  try {
+    const report = await ScanReport.findOne({ hash: req.params.hash });
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    report.dynamic_status = "not_started";
+    report.dynamic_report_data = null;
+    await report.save();
+    res.json({ status: "reset" });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
