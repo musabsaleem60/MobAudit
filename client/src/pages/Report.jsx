@@ -157,11 +157,19 @@ function Report({ reportData }) {
   const [isFixingCode, setIsFixingCode] = useState(false);
   const [fixError, setFixError] = useState(null);
   const [mitreData, setMitreData] = useState(null);
+  const [customAnalysis, setCustomAnalysis] = useState(null);
+  const [vtData, setVtData] = useState(null);
   
   // Dynamic Analysis State
   const [dynamicStatus, setDynamicStatus] = useState("not_started"); 
   const [dynamicError, setDynamicError] = useState(null);
   const [dynamicData, setDynamicData] = useState(null);
+
+  const currentDynamicData = dynamicData || report?.dynamic;
+  const hasDynamicData = !!(currentDynamicData && (
+    (currentDynamicData.domains && Object.keys(currentDynamicData.domains).length > 0) ||
+    (currentDynamicData.api_monitor && currentDynamicData.api_monitor.length > 0)
+  ));
 
   const navigate = useNavigate();
 
@@ -210,6 +218,18 @@ function Report({ reportData }) {
         if (mitreRes.ok) {
           const mitreJson = await mitreRes.json();
           setMitreData(mitreJson.mappings);
+        }
+
+        const customRes = await fetch(`http://${window.location.hostname}:5001/api/custom-analysis/${hash}`, { headers });
+        if (customRes.ok) {
+          const customJson = await customRes.json();
+          setCustomAnalysis(customJson);
+        }
+
+        const vtRes = await fetch(`http://${window.location.hostname}:5001/api/virustotal/${hash}`, { headers });
+        if (vtRes.ok) {
+          const vtJson = await vtRes.json();
+          setVtData(vtJson);
         }
         
         setError(null);
@@ -511,6 +531,13 @@ function Report({ reportData }) {
           >
             MITRE & CVE
             {activeTab === "mitre" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
+          </button>
+          <button 
+             onClick={() => setActiveTab("privacy")}
+             className={`pb-4 px-2 text-sm font-bold tracking-widest transition-all relative flex items-center ${activeTab === "privacy" ? "text-white" : "text-gray-500 hover:text-gray-300"}`}
+          >
+            <Shield className="w-4 h-4 mr-2" /> PRIVACY & MALWARE
+            {activeTab === "privacy" && <motion.div layoutId="tab-active" className="absolute bottom-0 left-0 right-0 h-0.5 bg-brand-red" />}
           </button>
         </div>
 
@@ -996,88 +1023,108 @@ function Report({ reportData }) {
               exit={{ opacity: 0, y: -10 }}
               className="space-y-8"
             >
-              <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl flex flex-col pt-12 items-center text-center">
-                 {dynamicStatus === "not_started" && (
-                    <>
-                       <Smartphone className="w-16 h-16 text-gray-500 mb-6" />
-                       <h3 className="text-2xl font-bold text-white mb-4">Run Dynamic Analysis</h3>
-                       <p className="text-sm text-gray-400 max-w-lg mb-8 leading-relaxed">
-                         Automated dynamic analysis requires an active emulator connected via ADB. This will install the APK, attach FRIDA instrumentation, and actively execute the app to capture real-time behavior, API calls, and HTTP logs over 40 seconds.
-                       </p>
+              {(dynamicStatus !== "completed" || !hasDynamicData) && (
+                <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl flex flex-col pt-12 items-center text-center">
+                   {(dynamicStatus === "not_started" || (dynamicStatus === "completed" && !hasDynamicData)) && (
+                      <>
+                         <Smartphone className="w-16 h-16 text-gray-500 mb-6" />
+                         <h3 className="text-2xl font-bold text-white mb-4">Run Dynamic Analysis</h3>
+                         <p className="text-sm text-gray-400 max-w-lg mb-8 leading-relaxed">
+                           Automated dynamic analysis requires an active emulator connected via ADB. This will install the APK, attach FRIDA instrumentation, and actively execute the app to capture real-time behavior, API calls, and HTTP logs over 40 seconds.
+                         </p>
+                         <button 
+                            onClick={startDynamicAnalysis}
+                            className="bg-brand-red text-white py-3 px-8 rounded-xl font-bold tracking-wider hover:bg-brand-red/90 transition-colors uppercase"
+                         >
+                            Initiate Execution Trace
+                         </button>
+                      </>
+                   )}
+
+                   {dynamicStatus === "running" && (
+                      <div className="flex flex-col items-center">
+                         <Loader2 className="w-16 h-16 animate-spin text-brand-red mb-6" />
+                         <h3 className="text-2xl font-bold text-white mb-2 blink">Executing Application</h3>
+                         <p className="text-xs text-brand-red tracking-widest font-mono uppercase mb-8">
+                           [ADB] Injecting Instrumentation Hook...
+                         </p>
+                         <div className="w-full max-w-sm h-1 bg-brand-dark rounded-full overflow-hidden">
+                            <motion.div 
+                              initial={{ width: "0%" }}
+                              animate={{ width: "100%" }}
+                              transition={{ duration: 40, ease: "linear" }}
+                              className="h-full bg-brand-red"
+                            />
+                         </div>
+                      </div>
+                   )}
+
+                   {dynamicStatus === "error" && (
+                      <>
+                         <AlertCircle className="w-16 h-16 text-brand-red mb-6" />
+                         <h3 className="text-2xl font-bold text-white mb-4">Execution Failed</h3>
+                         <p className="text-sm text-brand-red max-w-lg mb-8">{dynamicError || "The emulator disconnected or an unknown trace failure occurred."}</p>
+                         <button onClick={startDynamicAnalysis} className="border border-brand-red text-brand-red py-2 px-6 rounded-xl font-bold hover:bg-brand-red/10 transition-colors">RETRY</button>
+                      </>
+                   )}
+                </div>
+              )}
+
+              {dynamicStatus === "completed" && hasDynamicData && (
+                 <div className="space-y-6">
+                    <div className="flex justify-between items-center bg-brand-secondary/50 p-6 rounded-2xl border border-brand-border">
+                       <div>
+                          <h2 className="text-xl font-display font-bold text-white flex items-center">
+                             <CheckCircle2 className="w-6 h-6 mr-3 text-green-500" />
+                             Dynamic Trace Results
+                          </h2>
+                          <p className="text-gray-500 text-xs mt-1 font-mono">Real-time application execution traces captured successfully.</p>
+                       </div>
                        <button 
                           onClick={startDynamicAnalysis}
-                          className="bg-brand-red text-white py-3 px-8 rounded-xl font-bold tracking-wider hover:bg-brand-red/90 transition-colors uppercase"
+                          className="bg-brand-red text-white py-2.5 px-6 rounded-xl font-bold tracking-wider hover:bg-brand-red/90 transition-colors uppercase text-xs flex items-center"
                        >
-                          Initiate Execution Trace
+                          <RefreshCw className="w-4 h-4 mr-2" /> Re-run Analysis
                        </button>
-                    </>
-                 )}
-
-                 {dynamicStatus === "running" && (
-                    <div className="flex flex-col items-center">
-                       <Loader2 className="w-16 h-16 animate-spin text-brand-red mb-6" />
-                       <h3 className="text-2xl font-bold text-white mb-2 blink">Executing Application</h3>
-                       <p className="text-xs text-brand-red tracking-widest font-mono uppercase mb-8">
-                         [ADB] Injecting Instrumentation Hook...
-                       </p>
-                       <div className="w-full max-w-sm h-1 bg-brand-dark rounded-full overflow-hidden">
-                          <motion.div 
-                            initial={{ width: "0%" }}
-                            animate={{ width: "100%" }}
-                            transition={{ duration: 40, ease: "linear" }}
-                            className="h-full bg-brand-red"
-                          />
-                       </div>
-                    </div>
-                 )}
-
-                 {dynamicStatus === "error" && (
-                    <>
-                       <AlertCircle className="w-16 h-16 text-brand-red mb-6" />
-                       <h3 className="text-2xl font-bold text-white mb-4">Execution Failed</h3>
-                       <p className="text-sm text-brand-red max-w-lg mb-8">{dynamicError || "The emulator disconnected or an unknown trace failure occurred."}</p>
-                       <button onClick={startDynamicAnalysis} className="border border-brand-red text-brand-red py-2 px-6 rounded-xl font-bold hover:bg-brand-red/10 transition-colors">RETRY</button>
-                    </>
-                 )}
-              </div>
-
-              {dynamicStatus === "completed" && dynamicData && (
-                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-brand-secondary border border-brand-border p-6 rounded-2xl relative overflow-hidden group">
-                       <h3 className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-6 flex items-center">
-                          <Globe className="w-4 h-4 mr-2 text-brand-red" />
-                          Network Traffic Log
-                       </h3>
-                       <div className="space-y-4 max-h-96 overflow-auto custom-scrollbar pr-2">
-                          {dynamicData.domains && Object.keys(dynamicData.domains).length > 0 ? (
-                             Object.keys(dynamicData.domains).map((domain, i) => (
-                                <div key={i} className="bg-brand-dark border border-white/5 p-4 rounded-xl font-mono text-xs text-gray-300 flex justify-between items-center group-hover:border-brand-red/30 transition-colors">
-                                   <span className="truncate">{domain}</span>
-                                   <span className="bg-brand-red/20 text-brand-red px-2 py-1 rounded text-[10px] font-bold">CONTACTED</span>
-                                </div>
-                             ))
-                          ) : (
-                             <p className="text-sm text-gray-500 text-center py-10">No external network domains contacted during trace.</p>
-                          )}
-                       </div>
                     </div>
 
-                    <div className="bg-brand-secondary border border-brand-border p-6 rounded-2xl relative overflow-hidden group">
-                       <h3 className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-6 flex items-center">
-                          <FileCode className="w-4 h-4 mr-2 text-yellow-500" />
-                          Intercepted API/Java Hooks
-                       </h3>
-                       <div className="space-y-4 max-h-96 overflow-auto custom-scrollbar pr-2">
-                          {dynamicData.api_monitor && dynamicData.api_monitor.length > 0 ? (
-                             dynamicData.api_monitor.slice(0, 50).map((api, i) => (
-                                <div key={i} className="bg-brand-dark border border-white/5 p-4 rounded-xl text-xs text-gray-400 group-hover:border-yellow-500/30 transition-colors flex flex-col">
-                                   <strong className="text-white mb-1">{api.class}</strong>
-                                   <span className="font-mono text-[10px] text-yellow-500">{api.method}()</span>
-                                </div>
-                             ))
-                          ) : (
-                             <p className="text-sm text-gray-500 text-center py-10">No suspicious API calls routed via Frida instrumentation.</p>
-                          )}
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                       <div className="bg-brand-secondary border border-brand-border p-6 rounded-2xl relative overflow-hidden group">
+                          <h3 className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-6 flex items-center">
+                             <Globe className="w-4 h-4 mr-2 text-brand-red" />
+                             Network Traffic Log
+                          </h3>
+                          <div className="space-y-4 max-h-96 overflow-auto custom-scrollbar pr-2">
+                             {currentDynamicData.domains && Object.keys(currentDynamicData.domains).length > 0 ? (
+                                Object.keys(currentDynamicData.domains).map((domain, i) => (
+                                   <div key={i} className="bg-brand-dark border border-white/5 p-4 rounded-xl font-mono text-xs text-gray-300 flex justify-between items-center group-hover:border-brand-red/30 transition-colors">
+                                      <span className="truncate">{domain}</span>
+                                      <span className="bg-brand-red/20 text-brand-red px-2 py-1 rounded text-[10px] font-bold">CONTACTED</span>
+                                   </div>
+                                ))
+                             ) : (
+                                <p className="text-sm text-gray-500 text-center py-10">No external network domains contacted during trace.</p>
+                             )}
+                          </div>
+                       </div>
+
+                       <div className="bg-brand-secondary border border-brand-border p-6 rounded-2xl relative overflow-hidden group">
+                          <h3 className="text-[10px] font-bold tracking-widest uppercase text-gray-500 mb-6 flex items-center">
+                             <FileCode className="w-4 h-4 mr-2 text-yellow-500" />
+                             Intercepted API/Java Hooks
+                          </h3>
+                          <div className="space-y-4 max-h-96 overflow-auto custom-scrollbar pr-2">
+                             {currentDynamicData.api_monitor && currentDynamicData.api_monitor.length > 0 ? (
+                                currentDynamicData.api_monitor.slice(0, 50).map((api, i) => (
+                                   <div key={i} className="bg-brand-dark border border-white/5 p-4 rounded-xl text-xs text-gray-400 group-hover:border-yellow-500/30 transition-colors flex flex-col">
+                                      <strong className="text-white mb-1">{api.class}</strong>
+                                      <span className="font-mono text-[10px] text-yellow-500">{api.method}()</span>
+                                   </div>
+                                ))
+                             ) : (
+                                <p className="text-sm text-gray-500 text-center py-10">No suspicious API calls routed via Frida instrumentation.</p>
+                             )}
+                          </div>
                        </div>
                     </div>
                  </div>
@@ -1176,6 +1223,229 @@ function Report({ reportData }) {
                     <Shield className="w-16 h-16 mb-4 opacity-20" />
                     <h3 className="text-lg font-bold text-white mb-2">No Mappings Found</h3>
                     <p className="text-sm">We couldn't map any of the findings to specific MITRE ATT&CK tactics or CVEs.</p>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          )}
+
+          {activeTab === "privacy" && (
+            <motion.div 
+              key="privacy"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              className="space-y-8 animate-in fade-in duration-300"
+            >
+              {/* VIRUSTOTAL SECTION */}
+              <motion.div initial={{opacity:0,y:20}} animate={{opacity:1,y:0}} className="bg-brand-secondary rounded-xl p-6 border border-white/10 mb-6">
+                <div className="flex items-center gap-3 mb-4">
+                  <span className="text-2xl">🦠</span>
+                  <div>
+                    <h3 className="text-white font-bold text-lg">VIRUSTOTAL THREAT INTELLIGENCE</h3>
+                    <p className="text-gray-400 text-sm">Real-time antivirus engine reputation check</p>
+                  </div>
+                </div>
+
+                {!vtData ? (
+                  <p className="text-gray-400">Loading VirusTotal data...</p>
+                ) : vtData.error ? (
+                  <p className="text-yellow-400">⚠️ {vtData.error}</p>
+                ) : vtData.message ? (
+                  <p className="text-blue-400">⏳ {vtData.message}</p>
+                ) : (
+                  <>
+                    {/* Score Banner */}
+                    <div className={`rounded-lg p-4 mb-4 flex items-center justify-between ${
+                      vtData.malicious > 0 ? 'bg-red-900/40 border border-red-500/50' : 'bg-green-900/40 border border-green-500/50'
+                    }`}>
+                      <div>
+                        <p className={`text-3xl font-bold ${vtData.malicious > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                          {vtData.malicious}/{vtData.total}
+                        </p>
+                        <p className="text-gray-300 text-sm">engines flagged this file</p>
+                      </div>
+                      <div className={`text-4xl`}>
+                        {vtData.malicious === 0 ? '✅' : vtData.malicious < 5 ? '⚠️' : '🚨'}
+                      </div>
+                    </div>
+
+                    {/* Stats Row */}
+                    <div className="grid grid-cols-3 gap-3 mb-4">
+                      <div className="bg-red-900/20 rounded-lg p-3 text-center">
+                        <p className="text-red-400 text-xl font-bold">{vtData.malicious}</p>
+                        <p className="text-gray-400 text-xs">Malicious</p>
+                      </div>
+                      <div className="bg-yellow-900/20 rounded-lg p-3 text-center">
+                        <p className="text-yellow-400 text-xl font-bold">{vtData.suspicious}</p>
+                        <p className="text-gray-400 text-xs">Suspicious</p>
+                      </div>
+                      <div className="bg-green-900/20 rounded-lg p-3 text-center">
+                        <p className="text-green-400 text-xl font-bold">{vtData.undetected}</p>
+                        <p className="text-gray-400 text-xs">Clean</p>
+                      </div>
+                    </div>
+
+                    {/* SHA256 */}
+                    <div className="bg-black/30 rounded p-3 mb-4">
+                      <p className="text-gray-400 text-xs mb-1">SHA256 Hash</p>
+                      <p className="text-gray-300 text-xs font-mono break-all">{vtData.sha256}</p>
+                    </div>
+
+                    {/* Threat Label */}
+                    {vtData.threat_label && (
+                      <div className="bg-red-900/30 border border-red-500/30 rounded p-3 mb-4">
+                        <p className="text-red-400 text-sm font-bold">⚠️ Threat: {vtData.threat_label}</p>
+                      </div>
+                    )}
+
+                    {/* Flagged Engines */}
+                    {vtData.flagged_engines && vtData.flagged_engines.length > 0 && (
+                      <div>
+                        <p className="text-white font-bold text-sm mb-2">Flagged By:</p>
+                        {vtData.flagged_engines.map((e, i) => (
+                          <div key={i} className="flex justify-between items-center py-2 border-b border-white/5">
+                            <span className="text-gray-300 text-sm">{e.engine}</span>
+                            <span className="text-red-400 text-xs bg-red-900/30 px-2 py-1 rounded">{e.result}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {vtData.malicious === 0 && (
+                      <p className="text-green-400 text-sm mt-2">✅ No antivirus engines flagged this file as malicious</p>
+                    )}
+                  </>
+                )}
+              </motion.div>
+
+              {/* SECTION 1 — Privacy Risks */}
+              <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl">
+                <div className="flex items-center space-x-3 mb-2 text-orange-500">
+                  <AlertCircle className="w-6 h-6" />
+                  <h3 className="text-xl font-bold tracking-widest uppercase">PRIVACY RISK ANALYSIS</h3>
+                </div>
+                <p className="text-gray-400 text-xs mb-6">Permissions that may compromise user privacy</p>
+                
+                {customAnalysis?.privacy_risks && customAnalysis.privacy_risks.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {customAnalysis.privacy_risks.map((risk, idx) => (
+                      <div key={idx} className="bg-brand-dark/50 border border-orange-500/20 hover:border-orange-500/40 p-5 rounded-xl flex items-center space-x-4 transition-all">
+                        <div className="p-3 bg-orange-500/10 rounded-xl text-orange-500">
+                          <AlertCircle className="w-6 h-6" />
+                        </div>
+                        <span className="text-base font-bold text-gray-200">{risk}</span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-3 bg-green-500/10 border border-green-500/20 p-5 rounded-xl text-green-400">
+                    <CheckCircle2 className="w-6 h-6 animate-pulse" />
+                    <span className="text-sm font-bold tracking-widest uppercase">No privacy risks detected</span>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 2 — Dangerous Permissions */}
+              <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl">
+                <div className="flex items-center space-x-3 mb-2 text-brand-red">
+                  <Shield className="w-6 h-6" />
+                  <h3 className="text-xl font-bold tracking-widest uppercase">DANGEROUS PERMISSIONS</h3>
+                </div>
+                <div className="mb-6 flex justify-between items-center">
+                  <p className="text-gray-400 text-xs">Sensitive platform permissions requested by the application</p>
+                  {customAnalysis?.dangerous_permissions && customAnalysis.dangerous_permissions.length > 0 && (
+                    <span className="bg-brand-red/20 text-brand-red border border-brand-red/30 px-3 py-1 rounded-full text-xs font-bold font-mono">
+                      {customAnalysis.dangerous_permissions.length} dangerous permissions found
+                    </span>
+                  )}
+                </div>
+
+                {customAnalysis?.dangerous_permissions && customAnalysis.dangerous_permissions.length > 0 ? (
+                  <div className="flex flex-wrap gap-3">
+                    {customAnalysis.dangerous_permissions.map((perm, idx) => (
+                      <span key={idx} className="bg-brand-red/10 hover:bg-brand-red/20 text-brand-red border border-brand-red/20 hover:border-brand-red/30 px-4 py-2 rounded-xl text-xs font-mono font-bold tracking-wide transition-all">
+                        {perm}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-3 bg-green-500/10 border border-green-500/20 p-5 rounded-xl text-green-400">
+                    <CheckCircle2 className="w-6 h-6" />
+                    <span className="text-sm font-bold tracking-widest uppercase">No dangerous permissions</span>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 3 — Malware Indicators */}
+              <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl">
+                <div className="flex items-center space-x-3 mb-2 text-red-700">
+                  <AlertCircle className="w-6 h-6" />
+                  <h3 className="text-xl font-bold tracking-widest uppercase text-white">MALWARE INDICATORS</h3>
+                </div>
+                <p className="text-gray-400 text-xs mb-6">Heuristic markers associated with potential malware or framework hooking behavior</p>
+
+                {customAnalysis?.malware_indicators && customAnalysis.malware_indicators.length > 0 ? (
+                  <div className="grid grid-cols-1 gap-4">
+                    {customAnalysis.malware_indicators.map((indicator, idx) => {
+                      const sev = indicator.severity?.toLowerCase();
+                      const sevBadge = sev === 'critical' 
+                        ? 'bg-brand-red/10 text-brand-red border-brand-red/20' 
+                        : sev === 'high' 
+                          ? 'bg-orange-500/10 text-orange-500 border-orange-500/20' 
+                          : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
+                      return (
+                        <div key={idx} className="bg-brand-dark/50 border border-white/5 hover:border-brand-red/20 p-5 rounded-xl flex justify-between items-center transition-all group">
+                          <span className="text-base font-bold text-gray-200 group-hover:text-brand-red transition-colors">{indicator.indicator}</span>
+                          <span className={`px-3 py-1 rounded-full text-xs font-bold tracking-widest border uppercase ${sevBadge}`}>
+                            {indicator.severity}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-3 bg-green-500/10 border border-green-500/20 p-5 rounded-xl text-green-400">
+                    <CheckCircle2 className="w-6 h-6" />
+                    <span className="text-sm font-bold tracking-widest uppercase">No malware indicators detected</span>
+                  </div>
+                )}
+              </div>
+
+              {/* SECTION 4 — Manifest Security Issues */}
+              <div className="bg-brand-secondary border border-brand-border p-8 rounded-2xl">
+                <div className="flex items-center space-x-3 mb-2 text-yellow-500">
+                  <FileCode className="w-6 h-6" />
+                  <h3 className="text-xl font-bold tracking-widest uppercase text-white">MANIFEST SECURITY ISSUES</h3>
+                </div>
+                <p className="text-gray-400 text-xs mb-6">Security weaknesses and misconfigurations found in the decoded Android manifest</p>
+
+                {customAnalysis?.manifest_issues && customAnalysis.manifest_issues.length > 0 ? (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {customAnalysis.manifest_issues.map((issue, idx) => {
+                      const sev = issue.severity?.toLowerCase();
+                      const sevBadge = sev === 'high' 
+                        ? 'bg-brand-red/10 text-brand-red border-brand-red/20' 
+                        : sev === 'medium' 
+                          ? 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20' 
+                          : 'bg-blue-500/10 text-blue-500 border-blue-500/20';
+                      return (
+                        <div key={idx} className="bg-brand-dark/50 border border-white/5 hover:border-brand-border p-6 rounded-xl flex flex-col justify-between transition-all">
+                          <div className="flex justify-between items-start mb-3">
+                            <span className="text-lg font-bold text-white">{issue.issue}</span>
+                            <span className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-widest border uppercase ${sevBadge}`}>
+                              {issue.severity}
+                            </span>
+                          </div>
+                          <p className="text-sm text-gray-400">{issue.detail}</p>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="flex items-center space-x-3 bg-green-500/10 border border-green-500/20 p-5 rounded-xl text-green-400">
+                    <CheckCircle2 className="w-6 h-6" />
+                    <span className="text-sm font-bold tracking-widest uppercase">No manifest security issues</span>
                   </div>
                 )}
               </div>

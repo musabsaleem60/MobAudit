@@ -6,9 +6,12 @@ const FormData = require("form-data");
 const fs = require("fs");
 const cors = require("cors");
 const mongoose = require("mongoose");
-const { exec } = require("child_process");
+const { execSync, exec } = require('child_process');
+const AdmZip = require('adm-zip');
+const xml2js = require('xml2js');
 const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
+const path = require("path");
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 
@@ -74,7 +77,9 @@ function normalizeFinding(item, severityLabel) {
     line: item.line || item.line_number || "N/A",
     owasp: owasp,
     cvss: item.cvss || 0,
-    cwe: item.cwe || ""
+    cwe: item.cwe || item["cwe-id"] || item.cwe_id || 
+     mapCweFromTitle(item.title || '', item.description || '') ||
+     'N/A'
   };
 }
 
@@ -87,6 +92,246 @@ function deduplicate(findings) {
     seen.add(key);
     return true;
   });
+}
+
+function mapCweFromTitle(title, description) {
+  const text = `${title} ${description}`.toLowerCase();
+  if (text.includes('janus')) return 'CWE-347';
+  if (text.includes('debug') || text.includes('debuggable')) return 'CWE-489';
+  if (text.includes('certificate') || text.includes('ssl') || text.includes('tls')) return 'CWE-295';
+  if (text.includes('log') || text.includes('logcat')) return 'CWE-532';
+  if (text.includes('sqlite') || text.includes('database')) return 'CWE-312';
+  if (text.includes('storage') || text.includes('external storage')) return 'CWE-922';
+  if (text.includes('sql injection')) return 'CWE-89';
+  if (text.includes('crypto') || text.includes('md5') || text.includes('sha1') || text.includes('weak')) return 'CWE-327';
+  if (text.includes('random') || text.includes('prng')) return 'CWE-330';
+  if (text.includes('permission') || text.includes('exported')) return 'CWE-732';
+  if (text.includes('webview') || text.includes('javascript')) return 'CWE-79';
+  if (text.includes('intent') || text.includes('broadcast')) return 'CWE-925';
+  if (text.includes('hardcod')) return 'CWE-798';
+  if (text.includes('root') || text.includes('privilege')) return 'CWE-269';
+  if (text.includes('http') || text.includes('cleartext')) return 'CWE-319';
+  if (text.includes('backup') || text.includes('allowbackup')) return 'CWE-530';
+  if (text.includes('clipboard')) return 'CWE-200';
+  if (text.includes('injection')) return 'CWE-94';
+  if (text.includes('overflow')) return 'CWE-120';
+  return null;
+}
+
+async function checkVirusTotal(filePath) {
+  try {
+    const fs = require('fs');
+    const crypto = require('crypto');
+    const fileBuffer = fs.readFileSync(filePath);
+    const sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    
+    const vtApiKey = process.env.VIRUSTOTAL_API_KEY;
+    if (!vtApiKey) return { error: 'No API key', sha256 };
+
+    // First check if file already analyzed
+    const checkRes = await fetch(`https://www.virustotal.com/api/v3/files/${sha256}`, {
+      headers: { 'x-apikey': vtApiKey }
+    });
+
+    if (checkRes.ok) {
+      const data = await checkRes.json();
+      const stats = data?.data?.attributes?.last_analysis_stats || {};
+      const results = data?.data?.attributes?.last_analysis_results || {};
+      
+      const flaggedEngines = Object.entries(results)
+        .filter(([_, v]) => v.category === 'malicious')
+        .map(([engine, v]) => ({ engine, result: v.result }));
+
+      return {
+        sha256,
+        found: true,
+        malicious: stats.malicious || 0,
+        suspicious: stats.suspicious || 0,
+        undetected: stats.undetected || 0,
+        total: (stats.malicious || 0) + (stats.suspicious || 0) + (stats.undetected || 0) + (stats.harmless || 0),
+        flagged_engines: flaggedEngines.slice(0, 10),
+        threat_label: data?.data?.attributes?.popular_threat_classification?.suggested_threat_label || null,
+        scan_date: data?.data?.attributes?.last_analysis_date || null
+      };
+    }
+
+    // File not found — upload it
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', fs.createReadStream(filePath));
+
+    const uploadRes = await fetch('https://www.virustotal.com/api/v3/files', {
+      method: 'POST',
+      headers: { 'x-apikey': vtApiKey, ...form.getHeaders() },
+      body: form
+    });
+
+    if (uploadRes.ok) {
+      const uploadData = await uploadRes.json();
+      return {
+        sha256,
+        found: false,
+        uploaded: true,
+        analysis_id: uploadData?.data?.id,
+        message: 'File uploaded to VirusTotal. Results will be available in a few minutes.'
+      };
+    }
+
+    return { sha256, error: 'Upload failed' };
+
+  } catch(err) {
+    console.log('[VIRUSTOTAL] Error:', err.message);
+    return { error: err.message };
+  }
+}
+
+async function customApkParser(apkFilePath) {
+  const results = {
+    permissions: [],
+    dangerous_permissions: [],
+    privacy_risks: [],
+    malware_indicators: [],
+    hardcoded_secrets: [],
+    manifest_issues: [],
+    app_info: {}
+  };
+
+  try {
+    // Extract APK as ZIP
+    const zip = new AdmZip(apkFilePath);
+    
+    // Parse AndroidManifest.xml
+    const manifestEntry = zip.getEntry('AndroidManifest.xml');
+    if (manifestEntry) {
+      // Use apktool to decode properly
+      const outputDir = apkFilePath + '_decoded';
+      try {
+        execSync(`java -jar C:\\apktool\\apktool.jar d "${apkFilePath}" -o "${outputDir}" -f --no-src`, 
+          { timeout: 60000, stdio: 'ignore' });
+        
+        const fs = require('fs');
+        const manifestPath = outputDir + '\\AndroidManifest.xml';
+        
+        if (fs.existsSync(manifestPath)) {
+          const manifestContent = fs.readFileSync(manifestPath, 'utf8');
+          const parser = new xml2js.Parser();
+          const manifest = await parser.parseStringPromise(manifestContent);
+          
+          // Extract permissions
+          const perms = manifest?.manifest?.['uses-permission'] || [];
+          perms.forEach(p => {
+            const permName = p?.$?.['android:name'] || '';
+            results.permissions.push(permName);
+            
+            // Dangerous permissions check
+            const dangerousPerms = [
+              'READ_CONTACTS', 'WRITE_CONTACTS', 'ACCESS_FINE_LOCATION',
+              'ACCESS_COARSE_LOCATION', 'READ_CALL_LOG', 'WRITE_CALL_LOG',
+              'CAMERA', 'READ_SMS', 'SEND_SMS', 'RECEIVE_SMS', 'RECORD_AUDIO',
+              'WRITE_EXTERNAL_STORAGE', 'READ_EXTERNAL_STORAGE', 'GET_ACCOUNTS',
+              'PROCESS_OUTGOING_CALLS', 'READ_PHONE_STATE'
+            ];
+            if (dangerousPerms.some(d => permName.includes(d))) {
+              results.dangerous_permissions.push(permName);
+            }
+          });
+
+          // Privacy risks in plain English
+          if (results.permissions.some(p => p.includes('ACCESS_FINE_LOCATION') || p.includes('ACCESS_COARSE_LOCATION'))) {
+            results.privacy_risks.push('📍 This app can track your exact GPS location');
+          }
+          if (results.permissions.some(p => p.includes('READ_CONTACTS'))) {
+            results.privacy_risks.push('👥 This app can read all your contacts');
+          }
+          if (results.permissions.some(p => p.includes('READ_SMS') || p.includes('RECEIVE_SMS'))) {
+            results.privacy_risks.push('💬 This app can read your SMS messages');
+          }
+          if (results.permissions.some(p => p.includes('RECORD_AUDIO'))) {
+            results.privacy_risks.push('🎤 This app can record audio through your microphone');
+          }
+          if (results.permissions.some(p => p.includes('CAMERA'))) {
+            results.privacy_risks.push('📷 This app can access your camera');
+          }
+          if (results.permissions.some(p => p.includes('READ_CALL_LOG'))) {
+            results.privacy_risks.push('📞 This app can read your call history');
+          }
+          if (results.permissions.some(p => p.includes('SEND_SMS'))) {
+            results.privacy_risks.push('⚠️ This app can send SMS messages (potential premium SMS fraud)');
+          }
+
+          // Manifest security issues
+          const application = manifest?.manifest?.application?.[0];
+          if (application) {
+            if (application?.$?.['android:debuggable'] === 'true') {
+              results.manifest_issues.push({ issue: 'Debug mode enabled', severity: 'High', detail: 'android:debuggable=true allows attackers to hook debugger' });
+            }
+            if (application?.$?.['android:allowBackup'] === 'true') {
+              results.manifest_issues.push({ issue: 'Backup allowed', severity: 'Medium', detail: 'android:allowBackup=true allows data extraction via ADB' });
+            }
+            if (application?.$?.['android:networkSecurityConfig'] === undefined) {
+              results.manifest_issues.push({ issue: 'No Network Security Config', severity: 'Medium', detail: 'Missing network_security_config.xml may allow cleartext traffic' });
+            }
+          }
+
+          // App info
+          results.app_info = {
+            package: manifest?.manifest?.$?.package || 'Unknown',
+            version_code: manifest?.manifest?.$?.['android:versionCode'] || 'N/A',
+            version_name: manifest?.manifest?.$?.['android:versionName'] || 'N/A',
+            min_sdk: manifest?.manifest?.['uses-sdk']?.[0]?.$?.['android:minSdkVersion'] || 'N/A',
+            target_sdk: manifest?.manifest?.['uses-sdk']?.[0]?.$?.['android:targetSdkVersion'] || 'N/A',
+          };
+        }
+
+        // Scan strings for secrets
+        const stringsPath = outputDir + '\\res\\values\\strings.xml';
+        if (fs.existsSync(stringsPath)) {
+          const stringsContent = fs.readFileSync(stringsPath, 'utf8');
+          const secretPatterns = [
+            { name: 'API Key', regex: /api[_-]?key["\s:=]+([a-zA-Z0-9_\-]{20,})/gi },
+            { name: 'AWS Key', regex: /AKIA[0-9A-Z]{16}/g },
+            { name: 'Firebase URL', regex: /https:\/\/[a-z0-9-]+\.firebaseio\.com/gi },
+            { name: 'Google API Key', regex: /AIza[0-9A-Za-z_\-]{35}/g },
+            { name: 'Password', regex: /password["\s:=]+["']([^"']{6,})/gi },
+          ];
+          secretPatterns.forEach(pattern => {
+            const matches = stringsContent.match(pattern.regex);
+            if (matches) {
+              matches.forEach(m => results.hardcoded_secrets.push({ type: pattern.name, value: m.substring(0, 50) }));
+            }
+          });
+        }
+
+        // Cleanup
+        try { execSync(`rmdir /s /q "${outputDir}"`, { stdio: 'ignore' }); } catch(e) {}
+        
+      } catch(apktoolErr) {
+        console.log('[CUSTOM PARSER] apktool decode failed:', apktoolErr.message);
+      }
+    }
+
+    // Malware indicators - check file list
+    const entries = zip.getEntries();
+    const fileNames = entries.map(e => e.entryName.toLowerCase());
+    
+    if (fileNames.some(f => f.includes('su') || f.includes('superuser'))) {
+      results.malware_indicators.push({ indicator: 'Root exploit files detected', severity: 'Critical' });
+    }
+    if (fileNames.some(f => f.includes('xposed') || f.includes('substrate'))) {
+      results.malware_indicators.push({ indicator: 'Hook framework files detected (Xposed/Substrate)', severity: 'High' });
+    }
+    if (fileNames.filter(f => f.endsWith('.so')).length > 10) {
+      results.malware_indicators.push({ indicator: 'Excessive native libraries detected', severity: 'Medium' });
+    }
+    if (fileNames.some(f => f.includes('encrypt') && f.endsWith('.so'))) {
+      results.malware_indicators.push({ indicator: 'Encryption native library detected', severity: 'Medium' });
+    }
+
+  } catch(err) {
+    console.log('[CUSTOM PARSER] Error:', err.message);
+  }
+
+  return results;
 }
 
 // Main parser
@@ -296,7 +541,7 @@ function scanForSecrets(report) {
            found.add(key);
          }
        }
-    });
+     });
   });
 
   return secrets;
@@ -412,7 +657,10 @@ const scanReportSchema = new mongoose.Schema({
   hash: { type: String, required: true, unique: true },
   report_data: Object,
   dynamic_report_data: Object,
-  dynamic_status: { type: String, default: "not_started" }
+  dynamic_status: { type: String, default: "not_started" },
+  user_id: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null },
+  custom_analysis: { type: Object, default: {} },
+  virustotal: { type: Object, default: {} }
 });
 const ScanReport = mongoose.model("ScanReport", scanReportSchema);
 
@@ -498,10 +746,20 @@ app.post("/api/analyze", authenticateJWT, upload.single("apk"), async (req, res)
     const parsedReport = parseMobAuditReport(rawReport);
     parsedReport.hash = hash;
 
+    const uploadedFilePath = req.file.path;
+    console.log('[CUSTOM PARSER] Starting custom APK analysis...');
+    const customAnalysis = await customApkParser(uploadedFilePath);
+    console.log('[CUSTOM PARSER] Complete. Privacy risks:', customAnalysis.privacy_risks.length, 'Malware indicators:', customAnalysis.malware_indicators.length);
+
+    console.log('[VIRUSTOTAL] Checking file reputation...');
+    const vtResult = await checkVirusTotal(uploadedFilePath);
+    console.log('[VIRUSTOTAL] Complete. Malicious:', vtResult.malicious || 0, '/', vtResult.total || 0);
+
     // Save
+    const userId = req.user?.id || null;
     await ScanReport.findOneAndUpdate(
       { hash },
-      { hash, report_data: rawReport },
+      { hash, report_data: rawReport, user_id: userId, custom_analysis: customAnalysis, virustotal: vtResult },
       { upsert: true }
     );
 
@@ -539,7 +797,7 @@ app.get("/api/risk-score/:hash", authenticateJWT, async (req, res) => {
   console.log(`[FLOW] 1. Initializing risk calculation for hash: ${req.params.hash}`);
   try {
     // 1. Fetch
-    const reportFromDb = await ScanReport.findOne({ hash: req.params.hash });
+    const reportFromDb = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!reportFromDb) {
       console.log(`[FLOW] [ERROR] Report not found in database for hash: ${req.params.hash}`);
       return res.status(404).json({ error: "Report not found" });
@@ -622,10 +880,33 @@ app.get("/api/risk-score/:hash", authenticateJWT, async (req, res) => {
   }
 });
 
+app.get("/api/custom-analysis/:hash", authenticateJWT, async (req, res) => {
+  try {
+    const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    res.json(report.custom_analysis || { 
+      permissions: [], dangerous_permissions: [], privacy_risks: [], 
+      malware_indicators: [], hardcoded_secrets: [], manifest_issues: [], app_info: {} 
+    });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get("/api/virustotal/:hash", authenticateJWT, async (req, res) => {
+  try {
+    const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
+    if (!report) return res.status(404).json({ error: "Report not found" });
+    res.json(report.virustotal || { error: 'No VirusTotal data' });
+  } catch(err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ================== 🔑 SECRETS ==================
 app.get("/api/secrets/:hash", authenticateJWT, async (req, res) => {
   try {
-    const report = await ScanReport.findOne({ hash: req.params.hash });
+    const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!report) return res.status(404).json({ error: "Report not found" });
 
     const secrets = scanForSecrets(report.report_data);
@@ -644,7 +925,7 @@ app.get("/api/secrets/:hash", authenticateJWT, async (req, res) => {
 app.get("/api/report/:hash", authenticateJWT, async (req, res) => {
   console.log(`[API] Fetching report for hash: ${req.params.hash}`);
   try {
-    const report = await ScanReport.findOne({ hash: req.params.hash });
+    const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!report) return res.status(404).json({ error: "Report not found" });
 
     const parsedReport = parseMobAuditReport(report.report_data);
@@ -712,46 +993,432 @@ app.get("/api/report/download/pdf/:hash", async (req, res) => {
     if (!reportData) return res.status(404).send("Report not found");
     
     const parsed = parseMobAuditReport(reportData.report_data);
-    const doc = new PDFDocument();
+    const findings = parsed.findings || [];
+    const raw = reportData.report_data;
     
-    res.setHeader('Content-disposition', `attachment; filename=mobaudit_${req.params.hash}.pdf`);
+    // Calculate scores
+    let totalScore = 0, highCount = 0, medCount = 0, lowCount = 0;
+    findings.forEach(f => {
+      const sev = (f.severity || '').toLowerCase();
+      if (sev === 'high' || sev === 'critical') { totalScore += 3; highCount++; }
+      else if (sev === 'medium' || sev === 'warning') { totalScore += 2; medCount++; }
+      else { totalScore += 1; lowCount++; }
+    });
+    const finalScore = Math.min(totalScore, 100);
+    const riskLevel = finalScore > 70 ? 'HIGH' : finalScore > 30 ? 'MEDIUM' : 'LOW';
+    const riskColor = riskLevel === 'HIGH' ? '#E11D48' : riskLevel === 'MEDIUM' ? '#F59E0B' : '#10B981';
+    
+    const mitreMappings = mapToMitreAndCve(findings);
+    const permissions = parsed.app_info?.permissions || [];
+    
+    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    res.setHeader('Content-disposition', `attachment; filename=MobAudit_${parsed.app.name}_Report.pdf`);
     res.setHeader('Content-type', 'application/pdf');
     doc.pipe(res);
+    
+    // Helper functions
+    const addPageHeader = (title) => {
+      doc.rect(0, 0, 612, 40).fill('#0a0a0a');
+      doc.fontSize(8).fillColor('#888888').font('Helvetica')
+         .text('MOBAUDIT SECURITY PLATFORM', 50, 14)
+         .text(parsed.app.name, 0, 14, { width: 562, align: 'right' });
+      doc.rect(0, 40, 612, 3).fill('#E11D48');
+      doc.moveDown(2);
+    };
+    
+    const addPageFooter = (pageNum) => {
+      doc.rect(0, 775, 612, 25).fill('#0a0a0a');
+      doc.fontSize(7).fillColor('#888888').font('Helvetica')
+         .text('CONFIDENTIAL — MobAudit Security Platform', 50, 782)
+         .text(`Page ${pageNum}`, 0, 782, { width: 562, align: 'right' });
+    };
+    
+    const sectionHeader = (title, y) => {
+      doc.rect(50, y, 4, 24).fill('#E11D48');
+      doc.fontSize(16).fillColor('#0a0a0a').font('Helvetica-Bold')
+         .text(title, 62, y + 4);
+      doc.rect(50, y + 28, 512, 1).fill('#dddddd');
+      return y + 40;
+    };
+    
+    // ===================== PAGE 1: COVER =====================
+    // Full dark cover
+    doc.rect(0, 0, 612, 842).fill('#0a0a0a');
 
-    // Title
-    doc.fontSize(25).fillColor('#E11D48').text('MobAudit Analysis Report', { align: 'center' });
-    doc.moveDown();
-    
-    // App Info
-    doc.fillColor('black').fontSize(14).text(`App Name: ${parsed.app.name}`);
-    doc.text(`Package: ${parsed.app.package}`);
-    doc.text(`Version: ${parsed.app.version}`);
-    doc.text(`Analysis Hash: ${req.params.hash}`);
-    doc.moveDown();
-    
-    // Summary
-    doc.fontSize(18).text('Security Summary');
-    doc.fontSize(12).text(`Total Findings: ${parsed.findings.length}`);
-    doc.text(`High: ${parsed.findings.filter(f => f.severity === "High").length}`);
-    doc.text(`Medium: ${parsed.findings.filter(f => f.severity === "Medium").length}`);
-    doc.text(`Low: ${parsed.findings.filter(f => f.severity === "Low").length}`);
-    doc.moveDown();
+    // Logo - bigger and centered
+    const logoPath = path.join(__dirname, '../client/public/logo.png');
+    try {
+      doc.image(logoPath, 156, 180, { width: 300, height: 90, fit: [300, 90] });
+    } catch(e) {
+      doc.fontSize(42).fillColor('#E11D48').font('Helvetica-Bold')
+         .text('MOBAUDIT', 50, 200, { align: 'center' });
+    }
 
-    // Findings
-    doc.fontSize(18).text('Findings Details');
-    doc.moveDown();
+    // Subtitle
+    doc.fontSize(16).fillColor('#cccccc').font('Helvetica')
+       .text('Mobile Application Security Analysis Report', 50, 300, { align: 'center', width: 512 });
+
+    // Divider line
+    doc.rect(150, 335, 312, 1).fill('#E11D48');
+
+    // Date and ID
+    doc.fontSize(10).fillColor('#888888').font('Helvetica')
+       .text(`Generated: ${new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}`, 50, 355, { align: 'center', width: 512 });
+    doc.fontSize(9).fillColor('#555555')
+       .text(`Analysis ID: ${req.params.hash}`, 50, 375, { align: 'center', width: 512 });
+
+    // Risk badge - bigger
+    doc.rect(206, 410, 200, 55).fill(riskColor);
+    doc.fontSize(22).fillColor('#ffffff').font('Helvetica-Bold')
+       .text(`${riskLevel} RISK`, 206, 425, { width: 200, align: 'center' });
+
+    // Bottom accent line
+    doc.rect(0, 500, 612, 3).fill(riskColor);
     
-    parsed.findings.forEach((f, i) => {
-      doc.fontSize(14).fillColor(f.severity === 'High' ? '#E11D48' : 'black').text(`${i+1}. ${f.title} (${f.severity})`);
-      doc.fontSize(10).fillColor('gray').text(`File: ${f.file} : Line ${f.line}`);
-      doc.fillColor('black').text(f.description);
-      doc.moveDown();
+    let y = 520;
+    doc.fontSize(14).fillColor('#E11D48').font('Helvetica-Bold')
+       .text('APPLICATION INFORMATION', 50, y);
+    y += 25;
+    doc.rect(50, y, 512, 1).fill('#dddddd');
+    y += 15;
+    
+    const appInfo = [
+      ['Application Name', parsed.app.name],
+      ['Package Name', parsed.app.package],
+      ['Version', parsed.app.version],
+      ['Main Activity', parsed.app.main_activity],
+      ['Minimum SDK', parsed.app.min_sdk || 'N/A'],
+      ['Target SDK', parsed.app.target_sdk || 'N/A'],
+      ['Activities', String(parsed.app.counts?.activities || 0)],
+      ['Services', String(parsed.app.counts?.services || 0)],
+      ['Receivers', String(parsed.app.counts?.receivers || 0)],
+      ['Providers', String(parsed.app.counts?.providers || 0)],
+    ];
+    
+    appInfo.forEach(([label, value], i) => {
+      if (i % 2 === 0) doc.rect(50, y, 512, 22).fill('#f9f9f9');
+      doc.fontSize(9).fillColor('#888888').font('Helvetica-Bold')
+         .text(label, 60, y + 6);
+      doc.fontSize(9).fillColor('#000000').font('Helvetica')
+         .text(String(value || 'N/A'), 220, y + 6);
+      y += 22;
     });
+    
+    addPageFooter(1);
+    
+    // ===================== PAGE 2: EXECUTIVE SUMMARY =====================
+    doc.addPage();
+    addPageHeader('Executive Summary');
+    
+    y = 65;
+    y = sectionHeader('EXECUTIVE SUMMARY', y);
+    
+    // 4 stat boxes
+    const statBoxes = [
+      { label: 'RISK SCORE', value: finalScore, color: riskColor, bg: riskLevel === 'HIGH' ? '#ffebee' : riskLevel === 'MEDIUM' ? '#fff8e1' : '#e8f5e9' },
+      { label: 'HIGH FINDINGS', value: highCount, color: '#E11D48', bg: '#ffebee' },
+      { label: 'MEDIUM FINDINGS', value: medCount, color: '#F59E0B', bg: '#fff8e1' },
+      { label: 'LOW FINDINGS', value: lowCount, color: '#10B981', bg: '#e8f5e9' },
+    ];
+    
+    statBoxes.forEach((box, i) => {
+      const x = 50 + (i * 130);
+      doc.rect(x, y, 120, 80).fill(box.bg);
+      doc.rect(x, y, 120, 4).fill(box.color);
+      doc.fontSize(32).fillColor(box.color).font('Helvetica-Bold')
+         .text(String(box.value), x, y + 18, { width: 120, align: 'center' });
+      doc.fontSize(8).fillColor('#666666').font('Helvetica-Bold')
+         .text(box.label, x, y + 58, { width: 120, align: 'center' });
+    });
+    
+    y += 100;
+    
+    // Risk interpretation
+    doc.fontSize(9).fillColor('#444444').font('Helvetica')
+       .text(`Risk Assessment: This application has been assigned a risk score of ${finalScore}/100 (${riskLevel} RISK). ${
+         riskLevel === 'HIGH' ? 'Immediate remediation is required. Critical vulnerabilities pose significant security risks.' :
+         riskLevel === 'MEDIUM' ? 'Remediation is recommended. Several vulnerabilities require attention before production deployment.' :
+         'Application shows acceptable security posture. Minor improvements recommended.'
+       }`, 50, y, { width: 512 });
+    y += 40;
+    
+    // Severity bar chart
+    y = sectionHeader('SEVERITY DISTRIBUTION', y);
+    const total = highCount + medCount + lowCount;
+    
+    [
+      { label: 'CRITICAL/HIGH', count: highCount, color: '#E11D48' },
+      { label: 'MEDIUM',        count: medCount,  color: '#F59E0B' },
+      { label: 'LOW/INFO',      count: lowCount,  color: '#10B981' },
+    ].forEach(bar => {
+      const pct = total > 0 ? Math.round((bar.count / total) * 100) : 0;
+      const barWidth = total > 0 ? (bar.count / total) * 300 : 0;
+      
+      // Label on left
+      doc.fontSize(9).fillColor('#444444').font('Helvetica-Bold')
+         .text(bar.label, 50, y, { width: 120, lineBreak: false });
+      
+      // Gray background bar
+      doc.rect(180, y + 2, 300, 14).fill('#eeeeee');
+      
+      // Colored fill bar
+      if (barWidth > 0) doc.rect(180, y + 2, barWidth, 14).fill(bar.color);
+      
+      // Count and percentage AFTER the bar, fixed position
+      doc.fontSize(9).fillColor('#000000').font('Helvetica')
+         .text(`${bar.count}  (${pct}%)`, 490, y, { width: 80, lineBreak: false });
+      
+      y += 24;
+    });
+    
+    y += 10;
+    
+    // OWASP Summary Table
+    y = sectionHeader('OWASP MOBILE TOP 10 SUMMARY', y);
+    
+    const owaspCats = {};
+    findings.forEach(f => {
+      const cat = f.owasp || 'Uncategorized';
+      owaspCats[cat] = (owaspCats[cat] || 0) + 1;
+    });
+    
+    doc.rect(50, y, 512, 20).fill('#0a0a0a');
+    doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
+       .text('OWASP CATEGORY', 55, y + 6)
+       .text('FINDINGS', 430, y + 6)
+       .text('RISK', 510, y + 6);
+    y += 20;
+    
+    Object.entries(owaspCats).sort((a, b) => b[1] - a[1]).forEach(([cat, count], i) => {
+      if (y > 720) { doc.addPage(); addPageHeader('OWASP Summary'); y = 65; }
+      if (i % 2 === 0) doc.rect(50, y, 512, 20).fill('#f9f9f9');
+      doc.rect(50, y, 512, 20).strokeColor('#dddddd').lineWidth(0.5).stroke();
+      doc.fontSize(8).fillColor('#000000').font('Helvetica')
+         .text(cat, 55, y + 6, { width: 360 });
+      doc.fontSize(8).fillColor('#E11D48').font('Helvetica-Bold')
+         .text(String(count), 430, y + 6);
+      const catRisk = count > 5 ? 'HIGH' : count > 2 ? 'MEDIUM' : 'LOW';
+      const catColor = catRisk === 'HIGH' ? '#E11D48' : catRisk === 'MEDIUM' ? '#F59E0B' : '#10B981';
+      doc.rect(505, y + 4, 45, 14).fill(catColor);
+      doc.fontSize(7).fillColor('#ffffff').font('Helvetica-Bold')
+         .text(catRisk, 505, y + 8, { width: 45, align: 'center' });
+      y += 20;
+    });
+    
+    addPageFooter(2);
+    
+    // ===================== PAGE 3+: DETAILED FINDINGS =====================
+    doc.addPage();
+    addPageHeader('Security Findings');
+    y = 65;
+    let pageNum = 3;
+    y = sectionHeader(`DETAILED SECURITY FINDINGS (${findings.length} Total)`, y);
+    
+    findings.forEach((f, i) => {
+      const cardHeight = 110;
+      if (y + cardHeight > 750) {
+        addPageFooter(pageNum);
+        doc.addPage();
+        addPageHeader('Security Findings');
+        pageNum++;
+        y = 65;
+      }
+      
+      const sevColor = f.severity === 'High' || f.severity === 'Critical' ? '#E11D48' :
+                       f.severity === 'Medium' || f.severity === 'Warning' ? '#F59E0B' : '#10B981';
+      const sevBg = f.severity === 'High' || f.severity === 'Critical' ? '#fff5f5' :
+                    f.severity === 'Medium' || f.severity === 'Warning' ? '#fffbf0' : '#f0fff4';
+      
+      doc.rect(50, y, 512, cardHeight).fill(sevBg);
+      doc.rect(50, y, 512, cardHeight).strokeColor('#dddddd').lineWidth(0.5).stroke();
+      doc.rect(50, y, 5, cardHeight).fill(sevColor);
+      
+      doc.rect(58, y + 8, 24, 16).fill(sevColor);
+      doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
+         .text(String(i + 1), 58, y + 12, { width: 24, align: 'center' });
+      
+      doc.rect(462, y + 8, 92, 16).fill(sevColor);
+      doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
+         .text(f.severity.toUpperCase(), 462, y + 12, { width: 92, align: 'center' });
+      
+      doc.fontSize(10).fillColor('#000000').font('Helvetica-Bold')
+         .text(f.title, 88, y + 8, { width: 365 });
+      
+      doc.fontSize(8).fillColor('#444444').font('Helvetica')
+         .text(f.description, 58, y + 30, { width: 496, height: 45, ellipsis: true });
+      
+      doc.rect(50, y + cardHeight - 22, 512, 22).fill('#00000011');
+      doc.fontSize(7).fillColor('#666666').font('Helvetica')
+         .text(`File: ${f.file || 'N/A'}`, 58, y + cardHeight - 15, { width: 200 })
+         .text(`OWASP: ${f.owasp || 'Uncategorized'}`, 270, y + cardHeight - 15, { width: 180 })
+         .text(`CWE: ${f.cwe || 'N/A'}`, 460, y + cardHeight - 15, { width: 95 });
+      
+      y += cardHeight + 8;
+    });
+    
+    addPageFooter(pageNum);
+    pageNum++;
+    
+    // ===================== PERMISSIONS PAGE =====================
+    if (permissions.length > 0) {
+      doc.addPage();
+      addPageHeader('Permissions Analysis');
+      y = 65;
+      y = sectionHeader(`PERMISSIONS ANALYSIS (${permissions.length} Total)`, y);
+      
+      const dangerousPerms = ['READ_CONTACTS', 'WRITE_CONTACTS', 'ACCESS_FINE_LOCATION', 
+        'ACCESS_COARSE_LOCATION', 'READ_CALL_LOG', 'WRITE_CALL_LOG', 'CAMERA',
+        'READ_SMS', 'SEND_SMS', 'RECEIVE_SMS', 'RECORD_AUDIO', 'WRITE_EXTERNAL_STORAGE',
+        'READ_EXTERNAL_STORAGE', 'GET_ACCOUNTS', 'USE_CREDENTIALS'];
+      
+      doc.rect(50, y, 512, 20).fill('#0a0a0a');
+      doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
+         .text('PERMISSION', 55, y + 6)
+         .text('TYPE', 480, y + 6);
+      y += 20;
+      
+      permissions.slice(0, 30).forEach((perm, i) => {
+        if (y > 720) { addPageFooter(pageNum); doc.addPage(); addPageHeader('Permissions'); pageNum++; y = 65; }
+        const permName = typeof perm === 'string' ? perm : (perm.name || perm.permission || JSON.stringify(perm));
+        const isDangerous = dangerousPerms.some(d => permName.toUpperCase().includes(d));
+        if (i % 2 === 0) doc.rect(50, y, 512, 20).fill('#f9f9f9');
+        doc.fontSize(8).fillColor('#000000').font('Helvetica')
+           .text(permName, 55, y + 6, { width: 410 });
+        const permColor = isDangerous ? '#E11D48' : '#10B981';
+        const permLabel = isDangerous ? 'DANGEROUS' : 'NORMAL';
+        doc.rect(468, y + 3, 80, 14).fill(permColor);
+        doc.fontSize(7).fillColor('#ffffff').font('Helvetica-Bold')
+           .text(permLabel, 468, y + 7, { width: 80, align: 'center' });
+        y += 20;
+      });
+      
+      addPageFooter(pageNum);
+      pageNum++;
+    }
+    
+    // ===================== MITRE PAGE =====================
+    doc.addPage();
+    addPageHeader('MITRE ATT&CK & CVE');
+    y = 65;
+    y = sectionHeader(`MITRE ATT&CK & CVE MAPPINGS (${mitreMappings.length} Mappings)`, y);
+    
+    doc.rect(50, y, 512, 22).fill('#0a0a0a');
+    doc.fontSize(7).fillColor('#ffffff').font('Helvetica-Bold')
+       .text('VULNERABILITY', 55, y + 7)
+       .text('MITRE ID', 230, y + 7)
+       .text('TACTIC', 290, y + 7)
+       .text('CVE', 370, y + 7)
+       .text('CVSS', 490, y + 7);
+    y += 22;
+    
+    mitreMappings.forEach((m, i) => {
+      if (y > 720) { addPageFooter(pageNum); doc.addPage(); addPageHeader('MITRE ATT&CK'); pageNum++; y = 65; }
+      if (i % 2 === 0) doc.rect(50, y, 512, 35).fill('#f9f9f9');
+      doc.rect(50, y, 512, 35).strokeColor('#dddddd').lineWidth(0.3).stroke();
+      
+      doc.fontSize(7).fillColor('#000000').font('Helvetica-Bold')
+         .text(m.vulnerability.substring(0, 28), 55, y + 5, { width: 170 });
+      doc.fontSize(7).fillColor('#444444').font('Helvetica')
+         .text(m.remediation ? m.remediation.substring(0, 25) + '...' : '', 55, y + 18, { width: 170 });
+      
+      doc.rect(228, y + 5, 55, 16).fill('#1e3a5f');
+      doc.fontSize(8).fillColor('#ffffff').font('Helvetica-Bold')
+         .text(m.mitre_id, 228, y + 10, { width: 55, align: 'center' });
+      
+      doc.fontSize(7).fillColor('#444444').font('Helvetica')
+         .text(m.mitre_tactic, 290, y + 12, { width: 75 });
+      
+      doc.fontSize(7).fillColor('#E11D48').font('Helvetica-Bold')
+         .text(m.cve_id, 370, y + 5, { width: 115 });
+      doc.fontSize(6).fillColor('#666666').font('Helvetica')
+         .text(m.cve_description.substring(0, 35) + '...', 370, y + 17, { width: 115 });
+      
+      const cvssColor = m.cvss_score >= 9 ? '#E11D48' : m.cvss_score >= 7 ? '#F59E0B' : '#10B981';
+      doc.rect(488, y + 5, 66, 22).fill(cvssColor);
+      doc.fontSize(12).fillColor('#ffffff').font('Helvetica-Bold')
+         .text(String(m.cvss_score), 488, y + 10, { width: 66, align: 'center' });
+      
+      y += 38;
+    });
+    
+    addPageFooter(pageNum);
+    pageNum++;
+    
+    // ===================== RECOMMENDATIONS PAGE =====================
+    doc.addPage();
+    addPageHeader('Recommendations');
+    y = 65;
+    y = sectionHeader('SECURITY RECOMMENDATIONS', y);
+    
+    const criticalFindings = findings.filter(f => 
+      f.severity === 'High' || f.severity === 'Critical'
+    ).slice(0, 5);
+    
+    doc.fontSize(10).fillColor('#E11D48').font('Helvetica-Bold')
+       .text('IMMEDIATE ACTION REQUIRED', 50, y);
+    y += 20;
+    
+    criticalFindings.forEach((f, i) => {
+      if (y > 680) { addPageFooter(pageNum); doc.addPage(); addPageHeader('Recommendations'); pageNum++; y = 65; }
+      doc.rect(50, y, 512, 70).fill('#fff5f5');
+      doc.rect(50, y, 5, 70).fill('#E11D48');
+      doc.fontSize(9).fillColor('#E11D48').font('Helvetica-Bold')
+         .text(`${i + 1}. ${f.title}`, 62, y + 8, { width: 490 });
+      doc.fontSize(8).fillColor('#444444').font('Helvetica')
+         .text(f.description.substring(0, 200), 62, y + 24, { width: 490, height: 30, ellipsis: true });
+      doc.fontSize(7).fillColor('#888888')
+         .text(`OWASP: ${f.owasp || 'N/A'} | CWE: ${f.cwe || 'N/A'}`, 62, y + 56);
+      y += 78;
+    });
+    
+    y += 10;
+    y = sectionHeader('GENERAL SECURITY RECOMMENDATIONS', y);
+    
+    const recommendations = [
+      '1. Implement Certificate Pinning to prevent man-in-the-middle attacks on all network communications.',
+      '2. Enable ProGuard/R8 code obfuscation for release builds to prevent reverse engineering.',
+      '3. Remove all debug logs and debugging configurations before releasing to production.',
+      '4. Implement proper input validation and sanitization for all user inputs.',
+      '5. Use Android Keystore for storing sensitive cryptographic keys.',
+      '6. Apply principle of least privilege — request only necessary permissions.',
+      '7. Encrypt all sensitive data stored locally using AES-256 encryption.',
+      '8. Implement root detection and emulator detection mechanisms.',
+      '9. Use HTTPS for all network communications with proper TLS configuration.',
+      '10. Conduct regular security audits and penetration testing before major releases.',
+    ];
+    
+    recommendations.forEach((rec, i) => {
+      if (y > 720) { addPageFooter(pageNum); doc.addPage(); addPageHeader('Recommendations'); pageNum++; y = 65; }
+      doc.rect(50, y, 512, 28).fill(i % 2 === 0 ? '#f9f9f9' : '#ffffff');
+      doc.fontSize(9).fillColor('#000000').font('Helvetica')
+         .text(rec, 58, y + 8, { width: 496 });
+      y += 28;
+    });
+    
+    // Final footer
+    y += 20;
+    doc.rect(50, y, 512, 90).fill('#0a0a0a');
 
+    // Logo centered in footer box - no text overlap
+    const logoPath2 = path.join(__dirname, '../client/public/logo.png');
+    try {
+      doc.image(logoPath2, 181, y + 8, { width: 250, height: 45, fit: [250, 45] });
+    } catch(e) {
+      doc.fontSize(14).fillColor('#E11D48').font('Helvetica-Bold')
+         .text('MOBAUDIT', 50, y + 20, { width: 512, align: 'center' });
+    }
+
+    // Text BELOW logo, not overlapping
+    doc.fontSize(8).fillColor('#888888').font('Helvetica')
+       .text('This report is confidential and intended solely for the use of the addressed recipient.', 50, y + 58, { width: 512, align: 'center' })
+       .text(`© ${new Date().getFullYear()} MobAudit Security Platform. All rights reserved.`, 50, y + 72, { width: 512, align: 'center' });
+    
+    addPageFooter(pageNum);
     doc.end();
+    
   } catch (err) {
-    console.error(err);
-    res.status(500).send("PDF generation failed");
+    console.error('[PDF ERROR]', err);
+    res.status(500).send("PDF generation failed: " + err.message);
   }
 });
 
@@ -939,7 +1606,7 @@ function mapToMitreAndCve(findings) {
 app.get("/api/mitre-cve/:hash", authenticateJWT, async (req, res) => {
   console.log('[MITRE] Fetching for hash:', req.params.hash);
   try {
-    const reportFromDb = await ScanReport.findOne({ hash: req.params.hash });
+    const reportFromDb = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!reportFromDb) {
       return res.status(404).json({ error: "Report not found" });
     }
@@ -965,7 +1632,20 @@ app.get("/api/mitre-cve/:hash", authenticateJWT, async (req, res) => {
 // ================== SCAN HISTORY ==================
 app.get("/api/scans/history", authenticateJWT, async (req, res) => {
   try {
-    const reports = await ScanReport.find({}).sort({ _id: -1 }).limit(20);
+    const reports = await ScanReport.find({ 
+      $or: [
+        { user_id: req.user?.id },
+        { user_id: null }
+      ]
+    }).sort({ _id: -1 }).limit(20);
+
+    // After fetching, update null user_id records to current user
+    if (req.user?.id) {
+      await ScanReport.updateMany(
+        { user_id: null },
+        { $set: { user_id: req.user?.id } }
+      );
+    }
     res.json({
       scans: reports.map(report => {
         const parsed = parseMobAuditReport(report.report_data);
