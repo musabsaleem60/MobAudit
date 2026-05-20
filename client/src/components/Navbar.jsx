@@ -1,53 +1,41 @@
-import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Menu, LogOut } from "lucide-react";
-import MenuOverlay from "./MenuOverlay";
 
 function Navbar() {
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const navigate = useNavigate();
-
-  const handleLogout = () => {
-    localStorage.removeItem('mobaudit_token');
-    localStorage.removeItem('mobaudit_user');
-    navigate('/login');
-  };
 
   return (
     <>
       <nav className="fixed top-0 left-0 right-0 z-50 bg-brand-dark/80 backdrop-blur-md border-b border-white/5">
         <div className="max-w-[1400px] mx-auto flex items-center justify-between px-6 py-4">
-          {/* Menu Button */}
-          <button 
-            onClick={() => setIsMenuOpen(true)}
-            className="group flex flex-col space-y-1.5 p-2 hover:bg-white/5 rounded-lg transition-colors"
-          >
-            <div className="w-8 h-0.5 bg-white group-hover:bg-brand-red transition-colors"></div>
-            <div className="w-6 h-0.5 bg-white group-hover:bg-brand-red transition-colors"></div>
-          </button>
-
+          
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
-            <img src="/logo.png" alt="MobAudit" style={{ height: '36px', objectFit: 'contain' }} />
+            <img src="/logo.png" alt="MobAudit" style={{ height: '38px', objectFit: 'contain' }} />
           </Link>
 
           {/* Right Section */}
-          <div className="flex items-center space-x-6">
-            <Link to="/beta" className="text-white text-sm font-bold tracking-widest hover:text-brand-red transition-colors border-b-2 border-brand-red pb-0.5">
-              BETA ACCESS
-            </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             <button 
-              onClick={handleLogout}
-              className="flex items-center space-x-2 text-gray-400 hover:text-brand-red transition-colors"
+              onClick={() => navigate('/dashboard')}
+              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.2)', color: '#fff', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}
             >
-              <LogOut className="w-4 h-4" />
-              <span className="text-xs font-bold tracking-widest uppercase">Logout</span>
+              DASHBOARD
+            </button>
+            <button 
+              onClick={() => { 
+                localStorage.removeItem('mobaudit_token'); 
+                localStorage.removeItem('mobaudit_user'); 
+                localStorage.removeItem('token');
+                navigate('/login'); 
+              }}
+              style={{ background: '#E11D48', border: 'none', color: '#fff', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: '700' }}
+            >
+              LOGOUT
             </button>
           </div>
+          
         </div>
       </nav>
-      
-      <MenuOverlay isOpen={isMenuOpen} onClose={() => setIsMenuOpen(false)} />
       
       {/* Spacer to prevent content from going under fixed navbar */}
       <div className="h-[72px]"></div>
