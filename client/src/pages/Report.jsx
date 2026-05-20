@@ -26,6 +26,7 @@ import {
 import { useNavigate } from "react-router-dom";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { atomDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { safeText, safeCode, safeUrl } from '../utils/safeRender';
 
 function SecretCard({ secret, viewCode }) {
   const [revealed, setRevealed] = useState(false);
@@ -54,9 +55,9 @@ function SecretCard({ secret, viewCode }) {
                 {getRiskIcon(secret.risk_level)}
              </div>
              <div>
-                <h4 className="text-lg font-bold text-white group-hover:text-brand-red transition-colors">{secret.type}</h4>
+                <h4 className="text-lg font-bold text-white group-hover:text-brand-red transition-colors">{safeText(secret.type)}</h4>
                 <p className="text-[10px] font-mono text-gray-500 flex items-center mt-0.5">
-                   <FileCode className="w-3 h-3 mr-1" /> {secret.file}
+                   <FileCode className="w-3 h-3 mr-1" /> {safeText(secret.file)}
                 </p>
              </div>
           </div>
@@ -86,12 +87,12 @@ function SecretCard({ secret, viewCode }) {
              </span>
           </div>
           <div className="text-brand-red break-all">
-             {revealed ? secret.matched_string : secret.matched_string.replace(/.(?=.{4})/g, '*')}
+             {revealed ? safeText(secret.matched_string) : safeText(secret.matched_string).replace(/.(?=.{4})/g, '*')}
           </div>
           {secret.context && (
              <div className="mt-4 pt-4 border-t border-white/5">
                 <span className="text-[10px] text-gray-600 uppercase font-sans font-bold tracking-widest block mb-2">Context Snippet</span>
-                <div className="text-gray-400 italic">... {secret.context} ...</div>
+                <div className="text-gray-400 italic">... {safeText(secret.context)} ...</div>
              </div>
           )}
        </div>
@@ -188,7 +189,8 @@ function Report({ reportData }) {
   }, [report]);
 
   const startLiveStream = () => {
-    const sws = new WebSocket(`ws://${window.location.hostname}:5002?type=screen`);
+    const token = localStorage.getItem('mobaudit_token');
+    const sws = new WebSocket(`ws://${window.location.hostname}:5002?type=screen&token=${encodeURIComponent(token)}`);
     sws.onopen = () => setWsConnected(true);
     sws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
@@ -196,7 +198,7 @@ function Report({ reportData }) {
     };
     sws.onclose = () => setWsConnected(false);
     setScreenWs(sws);
-    const lws = new WebSocket(`ws://${window.location.hostname}:5002?type=logs`);
+    const lws = new WebSocket(`ws://${window.location.hostname}:5002?type=logs&token=${encodeURIComponent(token)}`);
     lws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === 'log') setLogLines(prev => [msg.data, ...prev].slice(0, 150));
@@ -359,7 +361,8 @@ function Report({ reportData }) {
 
   const connectLiveScreen = () => {
     // Screen WebSocket
-    const sws = new WebSocket('ws://localhost:5002?type=screen');
+    const token = localStorage.getItem('mobaudit_token');
+    const sws = new WebSocket(`ws://${window.location.hostname}:5002?type=screen&token=${encodeURIComponent(token)}`);
     sws.onopen = () => { setWsConnected(true); console.log('[WS] Screen connected'); };
     sws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
@@ -369,7 +372,7 @@ function Report({ reportData }) {
     setScreenWs(sws);
 
     // Log WebSocket
-    const lws = new WebSocket('ws://localhost:5002?type=logs');
+    const lws = new WebSocket(`ws://${window.location.hostname}:5002?type=logs&token=${encodeURIComponent(token)}`);
     lws.onmessage = (e) => {
       const msg = JSON.parse(e.data);
       if (msg.type === 'log') {
@@ -855,7 +858,7 @@ function Report({ reportData }) {
                               {vuln.severity}
                             </span>
                             <h3 className="text-lg font-bold text-white mt-3 group-hover:text-brand-red transition-colors">
-                              {vuln.title}
+                              {safeText(vuln.title)}
                             </h3>
                           </div>
                           <div className="flex items-center">
@@ -878,10 +881,10 @@ function Report({ reportData }) {
                           </div>
                         </div>
                         <p className="text-sm text-gray-400 mb-6 leading-relaxed max-w-4xl">
-                          {vuln.description}
+                          {safeText(vuln.description)}
                         </p>
                         <div className="flex items-center space-x-6 text-[10px] font-mono text-gray-500 py-3 border-t border-brand-border/50">
-                          <span className="flex items-center"><FileCode className="w-3 h-3 mr-1 text-brand-red" /> {vuln.file?.split('/').pop() || "N/A"}</span>
+                           <span className="flex items-center"><FileCode className="w-3 h-3 mr-1 text-brand-red" /> {safeText(vuln.file?.split('/').pop() || "N/A")}</span>
                           <span className="flex items-center"><Lock className="w-3 h-3 mr-1 text-brand-red" /> LINE: {vuln.line || "N/A"}</span>
                         </div>
                       </div>
@@ -913,13 +916,13 @@ function Report({ reportData }) {
                                         <h5 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center">
                                           <Info className="w-3 h-3 mr-2" /> Risk Explanation
                                         </h5>
-                                        <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-4 rounded-xl border border-white/5">{aiFixes[idx].explanation}</p>
+                                        <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-4 rounded-xl border border-white/5">{safeText(aiFixes[idx].explanation)}</p>
                                       </div>
                                       <div>
                                         <h5 className="text-[10px] font-bold text-gray-500 uppercase tracking-widest mb-2 flex items-center">
                                           <Shield className="w-3 h-3 mr-2" /> Step-by-Step Fix
                                         </h5>
-                                        <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-4 rounded-xl border border-white/5 whitespace-pre-wrap">{aiFixes[idx].fix}</p>
+                                        <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-4 rounded-xl border border-white/5 whitespace-pre-wrap">{safeText(aiFixes[idx].fix)}</p>
                                       </div>
                                     </div>
                                     
@@ -938,7 +941,7 @@ function Report({ reportData }) {
                                             backgroundColor: '#0d0d0d'
                                           }}
                                         >
-                                          {aiFixes[idx].secure_code}
+                                          {safeCode(aiFixes[idx].secure_code)}
                                         </SyntaxHighlighter>
                                       </div>
                                     </div>
@@ -1000,10 +1003,10 @@ function Report({ reportData }) {
                              </span>
                           </div>
                           <h4 className={`text-sm font-bold mb-2 ${selectedVuln?.idx === originalIdx ? 'text-brand-red' : 'text-white group-hover:text-brand-red'} transition-colors line-clamp-2`}>
-                             {vuln.title}
+                              {safeText(vuln.title)}
                           </h4>
                           <div className="flex items-center text-[10px] font-mono text-gray-500 truncate">
-                             <FileCode className="w-3 h-3 mr-1" /> {vuln.file.split('/').pop()}
+                              <FileCode className="w-3 h-3 mr-1" /> {safeText(vuln.file.split('/').pop())}
                           </div>
                        </div>
                      );
@@ -1043,7 +1046,7 @@ function Report({ reportData }) {
                                showLineNumbers={true}
                                customStyle={{ margin: 0, padding: '1rem', fontSize: '11px', backgroundColor: 'transparent' }}
                              >
-                               {code}
+                                {safeCode(code)}
                              </SyntaxHighlighter>
                            ) : (
                              <div className="text-gray-500 flex items-center justify-center h-full text-xs font-bold tracking-widest p-4 text-center">
@@ -1080,7 +1083,7 @@ function Report({ reportData }) {
                                  <div className="p-4 text-gray-300 text-sm leading-relaxed">
                                    <div className="mb-2 text-green-400 font-bold text-xs uppercase tracking-widest">Secure Code Example</div>
                                    <SyntaxHighlighter language="java" style={atomDark} customStyle={{fontSize: '11px'}}>
-                                     {formattedCode}
+                                      {safeCode(formattedCode)}
                                    </SyntaxHighlighter>
                                  </div>
                                );
@@ -1103,7 +1106,7 @@ function Report({ reportData }) {
                                  <Brain className="w-4 h-4 mr-2" /> Risk Explanation
                               </h4>
                               <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-5 rounded-xl border border-white/5 shadow-inner">
-                                {extractText(aiFixes[selectedVuln.idx]?.explanation)}
+                                 {safeText(extractText(aiFixes[selectedVuln.idx]?.explanation))}
                               </p>
                            </div>
                            <div>
@@ -1111,7 +1114,7 @@ function Report({ reportData }) {
                                  <CheckCircle2 className="w-4 h-4 mr-2" /> Step-by-Step Fix
                               </h4>
                               <p className="text-sm text-gray-300 leading-relaxed bg-brand-dark/50 p-5 rounded-xl border border-white/5 shadow-inner whitespace-pre-wrap">
-                                {extractText(aiFixes[selectedVuln.idx]?.fix)}
+                                 {safeText(extractText(aiFixes[selectedVuln.idx]?.fix))}
                               </p>
                            </div>
                         </div>
@@ -1560,7 +1563,7 @@ function Report({ reportData }) {
                       className="bg-brand-secondary border border-brand-border rounded-2xl p-6 flex flex-col hover:border-white/20 transition-all"
                     >
                       <div className="flex justify-between items-start mb-6 border-b border-brand-border pb-4">
-                        <h3 className="text-lg font-bold text-white max-w-[70%] leading-tight">{mapping.vulnerability}</h3>
+                        <h3 className="text-lg font-bold text-white max-w-[70%] leading-tight">{safeText(mapping.vulnerability)}</h3>
                         <span className={`px-3 py-1 rounded-md text-[10px] font-bold tracking-widest uppercase ${getSeverityStyles(mapping.severity)}`}>
                           {mapping.severity}
                         </span>
@@ -1569,18 +1572,18 @@ function Report({ reportData }) {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                         <div className="bg-blue-950/30 border border-blue-500/30 p-5 rounded-xl flex flex-col justify-between relative overflow-hidden">
                           <h4 className="text-blue-400 text-[10px] font-bold tracking-widest uppercase mb-3 z-10">MITRE ATT&CK</h4>
-                          <div className="text-4xl font-display font-bold text-blue-500/80 mb-2 z-10">{mapping.mitre_id}</div>
-                          <div className="text-white font-bold mb-2 z-10">{mapping.mitre_name}</div>
+                          <div className="text-4xl font-display font-bold text-blue-500/80 mb-2 z-10">{safeText(mapping.mitre_id)}</div>
+                          <div className="text-white font-bold mb-2 z-10">{safeText(mapping.mitre_name)}</div>
                           <div className="inline-block self-start bg-blue-500/20 text-blue-300 text-[10px] font-bold px-2 py-1 rounded tracking-widest uppercase z-10">
-                            {mapping.mitre_tactic}
+                            {safeText(mapping.mitre_tactic)}
                           </div>
                           <Shield className="absolute -bottom-6 -right-6 w-32 h-32 text-blue-500/10 z-0" />
                         </div>
                         
                         <div className="bg-orange-950/30 border border-orange-500/30 p-5 rounded-xl flex flex-col justify-between relative overflow-hidden">
                           <h4 className="text-orange-400 text-[10px] font-bold tracking-widest uppercase mb-3 z-10">CVE REFERENCE</h4>
-                          <div className="text-3xl font-display font-bold text-orange-500/80 mb-2 z-10">{mapping.cve_id}</div>
-                          <p className="text-sm text-gray-300 leading-relaxed z-10">{mapping.cve_description}</p>
+                          <div className="text-3xl font-display font-bold text-orange-500/80 mb-2 z-10">{safeText(mapping.cve_id)}</div>
+                          <p className="text-sm text-gray-300 leading-relaxed z-10">{safeText(mapping.cve_description)}</p>
                           <AlertCircle className="absolute -bottom-6 -right-6 w-32 h-32 text-orange-500/10 z-0" />
                         </div>
                       </div>
@@ -1611,7 +1614,7 @@ function Report({ reportData }) {
                           <div className="text-xs font-bold tracking-widest uppercase text-green-400 mb-2 flex items-center gap-2">
                             <span>✅</span> REMEDIATION
                           </div>
-                          <p className="text-gray-300 text-sm leading-relaxed">{mapping.remediation}</p>
+                          <p className="text-gray-300 text-sm leading-relaxed">{safeText(mapping.remediation)}</p>
                         </div>
                       )}
                     </motion.div>
@@ -1648,9 +1651,9 @@ function Report({ reportData }) {
                 {!vtData ? (
                   <p className="text-gray-400">Loading VirusTotal data...</p>
                 ) : vtData.error ? (
-                  <p className="text-yellow-400">⚠️ {vtData.error}</p>
+                  <p className="text-yellow-400">⚠️ {safeText(vtData.error)}</p>
                 ) : vtData.message ? (
-                  <p className="text-blue-400">⏳ {vtData.message}</p>
+                  <p className="text-blue-400">⏳ {safeText(vtData.message)}</p>
                 ) : (
                   <>
                     {/* Score Banner */}
@@ -1687,13 +1690,13 @@ function Report({ reportData }) {
                     {/* SHA256 */}
                     <div className="bg-black/30 rounded p-3 mb-4">
                       <p className="text-gray-400 text-xs mb-1">SHA256 Hash</p>
-                      <p className="text-gray-300 text-xs font-mono break-all">{vtData.sha256}</p>
+                      <p className="text-gray-300 text-xs font-mono break-all">{safeText(vtData.sha256)}</p>
                     </div>
 
                     {/* Threat Label */}
                     {vtData.threat_label && (
                       <div className="bg-red-900/30 border border-red-500/30 rounded p-3 mb-4">
-                        <p className="text-red-400 text-sm font-bold">⚠️ Threat: {vtData.threat_label}</p>
+                        <p className="text-red-400 text-sm font-bold">⚠️ Threat: {safeText(vtData.threat_label)}</p>
                       </div>
                     )}
 
@@ -1703,8 +1706,8 @@ function Report({ reportData }) {
                         <p className="text-white font-bold text-sm mb-2">Flagged By:</p>
                         {vtData.flagged_engines.map((e, i) => (
                           <div key={i} className="flex justify-between items-center py-2 border-b border-white/5">
-                            <span className="text-gray-300 text-sm">{e.engine}</span>
-                            <span className="text-red-400 text-xs bg-red-900/30 px-2 py-1 rounded">{e.result}</span>
+                            <span className="text-gray-300 text-sm">{safeText(e.engine)}</span>
+                            <span className="text-red-400 text-xs bg-red-900/30 px-2 py-1 rounded">{safeText(e.result)}</span>
                           </div>
                         ))}
                       </div>
@@ -1732,7 +1735,7 @@ function Report({ reportData }) {
                         <div className="p-3 bg-orange-500/10 rounded-xl text-orange-500">
                           <AlertCircle className="w-6 h-6" />
                         </div>
-                        <span className="text-base font-bold text-gray-200">{risk}</span>
+                        <span className="text-base font-bold text-gray-200">{safeText(risk)}</span>
                       </div>
                     ))}
                   </div>
@@ -1763,7 +1766,7 @@ function Report({ reportData }) {
                   <div className="flex flex-wrap gap-3">
                     {customAnalysis.dangerous_permissions.map((perm, idx) => (
                       <span key={idx} className="bg-brand-red/10 hover:bg-brand-red/20 text-brand-red border border-brand-red/20 hover:border-brand-red/30 px-4 py-2 rounded-xl text-xs font-mono font-bold tracking-wide transition-all">
-                        {perm}
+                        {safeText(perm)}
                       </span>
                     ))}
                   </div>
@@ -1794,9 +1797,9 @@ function Report({ reportData }) {
                           : 'bg-yellow-500/10 text-yellow-500 border-yellow-500/20';
                       return (
                         <div key={idx} className="bg-brand-dark/50 border border-white/5 hover:border-brand-red/20 p-5 rounded-xl flex justify-between items-center transition-all group">
-                          <span className="text-base font-bold text-gray-200 group-hover:text-brand-red transition-colors">{indicator.indicator}</span>
+                          <span className="text-base font-bold text-gray-200 group-hover:text-brand-red transition-colors">{safeText(indicator.indicator)}</span>
                           <span className={`px-3 py-1 rounded-full text-xs font-bold tracking-widest border uppercase ${sevBadge}`}>
-                            {indicator.severity}
+                            {safeText(indicator.severity)}
                           </span>
                         </div>
                       );
@@ -1830,12 +1833,12 @@ function Report({ reportData }) {
                       return (
                         <div key={idx} className="bg-brand-dark/50 border border-white/5 hover:border-brand-border p-6 rounded-xl flex flex-col justify-between transition-all">
                           <div className="flex justify-between items-start mb-3">
-                            <span className="text-lg font-bold text-white">{issue.issue}</span>
+                            <span className="text-lg font-bold text-white">{safeText(issue.issue)}</span>
                             <span className={`px-3 py-1 rounded-full text-[10px] font-bold tracking-widest border uppercase ${sevBadge}`}>
-                              {issue.severity}
+                              {safeText(issue.severity)}
                             </span>
                           </div>
-                          <p className="text-sm text-gray-400">{issue.detail}</p>
+                          <p className="text-sm text-gray-400">{safeText(issue.detail)}</p>
                         </div>
                       );
                     })}
@@ -1874,16 +1877,16 @@ function Report({ reportData }) {
                       <span style={{fontSize: '16px'}}>📋</span>
                       <div style={{flex: 1}}>
                         <p style={{color: '#ccc', fontSize: '11px', margin: 0, lineHeight: '1.5'}}>
-                          <strong style={{color: '#3B82F6'}}>{playstoreData.metadata.policy_version}</strong>
+                          <strong style={{color: '#3B82F6'}}>{safeText(playstoreData.metadata.policy_version)}</strong>
                           {' • '}
                           {playstoreData.metadata.checks_performed} automated checks performed
                         </p>
                         <p style={{color: '#666', fontSize: '10px', margin: 0, marginTop: '2px'}}>
-                          {playstoreData.metadata.disclaimer}
+                          {safeText(playstoreData.metadata.disclaimer)}
                         </p>
                       </div>
                       <a 
-                        href={playstoreData.metadata.documentation_url}
+                        href={safeUrl(playstoreData.metadata.documentation_url)}
                         target="_blank"
                         rel="noopener noreferrer"
                         style={{
@@ -1933,7 +1936,7 @@ function Report({ reportData }) {
                          playstoreData.verdict === 'NOT_READY' ? 'NOT READY' : 'WILL BE REJECTED'}
                       </h2>
                       <p style={{color: '#ccc', fontSize: '14px', margin: 0}}>
-                        {playstoreData.verdict_message}
+                        {safeText(playstoreData.verdict_message)}
                       </p>
                     </div>
                     <div style={{textAlign: 'center'}}>
@@ -2002,10 +2005,10 @@ function Report({ reportData }) {
                         >
                           <div style={{display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '10px'}}>
                             <span style={{fontSize: '18px'}}>❌</span>
-                            <h4 style={{color: '#fff', fontSize: '15px', fontWeight: '700', margin: 0}}>{c.title}</h4>
+                            <h4 style={{color: '#fff', fontSize: '15px', fontWeight: '700', margin: 0}}>{safeText(c.title)}</h4>
                           </div>
                           <p style={{color: '#ccc', fontSize: '13px', marginBottom: '12px', lineHeight: '1.6'}}>
-                            {c.message}
+                            {safeText(c.message)}
                           </p>
                           {c.fix && (
                             <div style={{
@@ -2024,12 +2027,12 @@ function Report({ reportData }) {
                               }}>
                                 ✅ HOW TO FIX
                               </p>
-                              <p style={{color: '#ccc', fontSize: '13px', margin: 0, lineHeight: '1.5'}}>{c.fix}</p>
+                              <p style={{color: '#ccc', fontSize: '13px', margin: 0, lineHeight: '1.5'}}>{safeText(c.fix)}</p>
                             </div>
                           )}
                           {(c.link || c.source) && (
                             <a 
-                              href={c.link || c.source} 
+                              href={safeUrl(c.link || c.source)} 
                               target="_blank" 
                               rel="noopener noreferrer"
                               style={{
@@ -2075,17 +2078,17 @@ function Report({ reportData }) {
                         }}>
                           <div style={{display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px'}}>
                             <span>⚠️</span>
-                            <h4 style={{color: '#fff', fontSize: '14px', fontWeight: '700', margin: 0}}>{w.title}</h4>
+                            <h4 style={{color: '#fff', fontSize: '14px', fontWeight: '700', margin: 0}}>{safeText(w.title)}</h4>
                           </div>
-                          <p style={{color: '#aaa', fontSize: '12px', marginBottom: '8px', lineHeight: '1.6'}}>{w.message}</p>
+                          <p style={{color: '#aaa', fontSize: '12px', marginBottom: '8px', lineHeight: '1.6'}}>{safeText(w.message)}</p>
                           {w.fix && (
                             <p style={{color: '#F59E0B', fontSize: '11px', margin: 0, lineHeight: '1.5'}}>
-                              💡 {w.fix}
+                              💡 {safeText(w.fix)}
                             </p>
                           )}
                           {(w.link || w.source) && (
                             <a 
-                              href={w.link || w.source} 
+                              href={safeUrl(w.link || w.source)} 
                               target="_blank" 
                               rel="noopener noreferrer"
                               style={{
@@ -2133,7 +2136,7 @@ function Report({ reportData }) {
                             gap: '10px'
                           }}>
                             <span style={{color: '#10B981', fontSize: '14px'}}>✓</span>
-                            <span style={{color: '#ccc', fontSize: '12px'}}>{p.title}</span>
+                            <span style={{color: '#ccc', fontSize: '12px'}}>{safeText(p.title)}</span>
                           </div>
                         ))}
                       </div>

@@ -4,6 +4,7 @@ import { Upload, ShieldAlert, CheckCircle, ArrowRight, Loader2, Bot, BarChart3, 
 import { useNavigate } from "react-router-dom";
 import { PieChart, Pie, Cell, Tooltip, Legend, BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer } from "recharts";
 import Report from "./Report";
+import { safeText } from '../utils/safeRender';
 
 function Dashboard() {
   const [file, setFile] = useState(null);
@@ -652,11 +653,11 @@ function Dashboard() {
                   <div className="flex justify-between items-start mb-4 border-b border-white/5 pb-4">
                     <div className="flex items-center space-x-3">
                       <div className="w-10 h-10 bg-[#E11D48]/10 text-[#E11D48] rounded-xl flex items-center justify-center font-bold text-xl uppercase border border-[#E11D48]/20">
-                        {scan.app_name ? scan.app_name.charAt(0) : '?'}
+                        {safeText(scan.app_name ? scan.app_name.charAt(0) : '?')}
                       </div>
                       <div>
-                        <div className="font-bold text-white group-hover:text-[#E11D48] transition-colors line-clamp-1">{scan.app_name || "Unknown App"}</div>
-                        <div className="text-[10px] text-gray-500 font-mono truncate max-w-[150px]">{scan.package || "unknown.package"}</div>
+                        <div className="font-bold text-white group-hover:text-[#E11D48] transition-colors line-clamp-1">{safeText(scan.app_name || "Unknown App")}</div>
+                        <div className="text-[10px] text-gray-500 font-mono truncate max-w-[150px]">{safeText(scan.package || "unknown.package")}</div>
                       </div>
                     </div>
                     

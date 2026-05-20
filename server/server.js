@@ -15,6 +15,7 @@ const PDFDocument = require("pdfkit");
 const path = require("path");
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
+const validator = require('validator');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'mobaudit_jwt_secret_2024';
 
@@ -30,9 +31,29 @@ const DEVICE = '192.168.174.101:5555';
 
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, 'http://localhost');
-  const streamType = url.searchParams.get('type') || 'screen';
+  const streamType = url.searchParams.get('type');
+  const wsToken = url.searchParams.get('token');
+
+  // Validate stream type — only allow known values
+  if (!['screen', 'logs'].includes(streamType)) {
+    ws.close(1008, 'Invalid stream type');
+    return;
+  }
+
+  // Validate JWT token
+  if (!wsToken) {
+    ws.close(1008, 'Authentication required');
+    return;
+  }
   
-  console.log(`[WS] Client connected - type: ${streamType}`);
+  try {
+    const decoded = jwt.verify(wsToken, JWT_SECRET);
+    ws.user = decoded;
+    console.log(`[WS] Authenticated client connected - type: ${streamType}, user: ${decoded.username}`);
+  } catch (err) {
+    ws.close(1008, 'Invalid token');
+    return;
+  }
 
   if (streamType === 'screen') {
     // Screen streaming loop
@@ -141,6 +162,37 @@ function mapOwaspCategory(title, description) {
   return "Uncategorized";
 }
 
+function isValidHash(hash) {
+  // SHA256 is 64 chars, MD5 is 32 chars — both hex only
+  if (typeof hash !== 'string') return false;
+  if (hash.length !== 32 && hash.length !== 64) return false;
+  return /^[a-f0-9]+$/i.test(hash);
+}
+
+function isValidFilePath(filePath) {
+  if (typeof filePath !== 'string') return false;
+  if (filePath.length > 500) return false;
+  // Block path traversal
+  if (filePath.includes('..')) return false;
+  if (filePath.startsWith('/')) return false;
+  if (filePath.startsWith('\\')) return false;
+  if (/^[a-zA-Z]:/.test(filePath)) return false;  // Block Windows drive letters
+  // Block control characters
+  if (/[\x00-\x1f]/.test(filePath)) return false;
+  // Only allow safe chars: alphanumeric, dots, slashes, dashes, underscores
+  if (!/^[a-zA-Z0-9._\-/]+$/.test(filePath)) return false;
+  return true;
+}
+
+// Sanitize text that may contain dangerous content from external sources
+function sanitizeTextForOutput(text, maxLength = 1000) {
+  if (typeof text !== 'string') return '';
+  let cleaned = text.substring(0, maxLength);
+  // Remove null bytes and control chars
+  cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return cleaned;
+}
+
 // Normalize vulnerability
 function normalizeFinding(item, severityLabel) {
   const title = item.title || item.name || item.issue || "Unknown Issue";
@@ -222,7 +274,10 @@ async function checkVirusTotal(filePath) {
       
       const flaggedEngines = Object.entries(results)
         .filter(([_, v]) => v.category === 'malicious')
-        .map(([engine, v]) => ({ engine, result: v.result }));
+        .map(([engine, v]) => ({
+          engine: sanitizeTextForOutput(engine, 100),
+          result: sanitizeTextForOutput(v.result || '', 300)
+        }));
 
       return {
         sha256,
@@ -232,7 +287,7 @@ async function checkVirusTotal(filePath) {
         undetected: stats.undetected || 0,
         total: (stats.malicious || 0) + (stats.suspicious || 0) + (stats.undetected || 0) + (stats.harmless || 0),
         flagged_engines: flaggedEngines.slice(0, 10),
-        threat_label: data?.data?.attributes?.popular_threat_classification?.suggested_threat_label || null,
+        threat_label: sanitizeTextForOutput(data?.data?.attributes?.popular_threat_classification?.suggested_threat_label || '', 200) || null,
         scan_date: data?.data?.attributes?.last_analysis_date || null
       };
     }
@@ -296,11 +351,30 @@ async function customApkParser(apkFilePath) {
         
         if (fs.existsSync(manifestPath)) {
           const manifestContent = fs.readFileSync(manifestPath, 'utf8');
-          const parser = new xml2js.Parser();
-          const manifest = await parser.parseStringPromise(manifestContent);
+          const parser = new xml2js.Parser({
+            explicitArray: false,
+            ignoreAttrs: false,
+            strict: true,
+            explicitCharkey: false,
+            trim: true,
+            normalize: false,
+            async: false,
+          });
+          let manifest = null;
+          if (manifestContent.includes('<!DOCTYPE') || manifestContent.includes('<!ENTITY') || /SYSTEM\s+["']/.test(manifestContent) || /PUBLIC\s+["']/.test(manifestContent)) {
+            console.warn('[CUSTOM PARSER] Suspicious DTD/entity declarations in manifest — XML parsing skipped for safety');
+          } else {
+            try {
+              manifest = await parser.parseStringPromise(manifestContent);
+            } catch(xmlErr) {
+              console.warn('[CUSTOM PARSER] Manifest XML parsing failed:', xmlErr.message);
+            }
+          }
           
+          if (manifest) {
           // Extract permissions
-          const perms = manifest?.manifest?.['uses-permission'] || [];
+          const rawPerms = manifest?.manifest?.['uses-permission'] || [];
+          const perms = Array.isArray(rawPerms) ? rawPerms : [rawPerms];
           perms.forEach(p => {
             const permName = p?.$?.['android:name'] || '';
             results.permissions.push(permName);
@@ -342,7 +416,8 @@ async function customApkParser(apkFilePath) {
           }
 
           // Manifest security issues
-          const application = manifest?.manifest?.application?.[0];
+          const rawApplication = manifest?.manifest?.application;
+          const application = Array.isArray(rawApplication) ? rawApplication[0] : rawApplication;
           if (application) {
             if (application?.$?.['android:debuggable'] === 'true') {
               results.manifest_issues.push({ issue: 'Debug mode enabled', severity: 'High', detail: 'android:debuggable=true allows attackers to hook debugger' });
@@ -356,13 +431,16 @@ async function customApkParser(apkFilePath) {
           }
 
           // App info
+          const rawUsesSdk = manifest?.manifest?.['uses-sdk'];
+          const usesSdk = Array.isArray(rawUsesSdk) ? rawUsesSdk[0] : rawUsesSdk;
           results.app_info = {
             package: manifest?.manifest?.$?.package || 'Unknown',
             version_code: manifest?.manifest?.$?.['android:versionCode'] || 'N/A',
             version_name: manifest?.manifest?.$?.['android:versionName'] || 'N/A',
-            min_sdk: manifest?.manifest?.['uses-sdk']?.[0]?.$?.['android:minSdkVersion'] || 'N/A',
-            target_sdk: manifest?.manifest?.['uses-sdk']?.[0]?.$?.['android:targetSdkVersion'] || 'N/A',
+            min_sdk: usesSdk?.$?.['android:minSdkVersion'] || 'N/A',
+            target_sdk: usesSdk?.$?.['android:targetSdkVersion'] || 'N/A',
           };
+          }
         }
 
         // Scan strings for secrets
@@ -913,6 +991,13 @@ const authenticateJWT = (req, res, next) => {
   }
 };
 
+const validateHashParam = (req, res, next) => {
+  if (req.params.hash && !isValidHash(req.params.hash)) {
+    return res.status(400).json({ error: 'Invalid hash format' });
+  }
+  next();
+};
+
 // Auth Routes
 app.post('/api/auth/login', async (req, res) => {
   const { username, password } = req.body;
@@ -1113,7 +1198,7 @@ app.get("/api/health", (req, res) => {
 
 
 // ================== 🛡️ RISK SCORE ==================
-app.get("/api/risk-score/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/risk-score/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   console.log(`[FLOW] 1. Initializing risk calculation for hash: ${req.params.hash}`);
   try {
     // 1. Fetch
@@ -1200,7 +1285,7 @@ app.get("/api/risk-score/:hash", authenticateJWT, async (req, res) => {
   }
 });
 
-app.get("/api/custom-analysis/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/custom-analysis/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -1213,7 +1298,7 @@ app.get("/api/custom-analysis/:hash", authenticateJWT, async (req, res) => {
   }
 });
 
-app.get("/api/virustotal/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/virustotal/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -1224,7 +1309,7 @@ app.get("/api/virustotal/:hash", authenticateJWT, async (req, res) => {
 });
 
 // ================== 🔑 SECRETS ==================
-app.get("/api/secrets/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/secrets/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -1241,7 +1326,7 @@ app.get("/api/secrets/:hash", authenticateJWT, async (req, res) => {
   }
 });
 
-app.get("/api/playstore-check/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/playstore-check/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -1258,7 +1343,7 @@ app.get("/api/playstore-check/:hash", authenticateJWT, async (req, res) => {
 });
 
 // ================== 📊 GET REPORT ==================
-app.get("/api/report/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/report/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   console.log(`[API] Fetching report for hash: ${req.params.hash}`);
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
@@ -1298,7 +1383,7 @@ app.get("/api/report/:hash", authenticateJWT, async (req, res) => {
 });
 
 // ================== 📥 DOWNLOAD JSON ==================
-app.get("/api/report/download/json/:hash", async (req, res) => {
+app.get("/api/report/download/json/:hash", validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
     if (!report) return res.status(404).send("Report not found");
@@ -1312,7 +1397,7 @@ app.get("/api/report/download/json/:hash", async (req, res) => {
 });
 
 // ================== 📥 DOWNLOAD CSV ==================
-app.get("/api/report/download/csv/:hash", async (req, res) => {
+app.get("/api/report/download/csv/:hash", validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
     if (!report) return res.status(404).send("Report not found");
@@ -1341,7 +1426,7 @@ app.get("/api/report/download/csv/:hash", async (req, res) => {
 });
 
 // ================== 📥 DOWNLOAD PDF ==================
-app.get("/api/report/download/pdf/:hash", async (req, res) => {
+app.get("/api/report/download/pdf/:hash", validateHashParam, async (req, res) => {
   try {
     const reportData = await ScanReport.findOne({ hash: req.params.hash });
     if (!reportData) return res.status(404).send("Report not found");
@@ -1989,11 +2074,12 @@ app.get("/api/report/download/pdf/:hash", async (req, res) => {
   }
 });
 
-app.get("/api/code/:hash", async (req, res) => {
-  const { file } = req.query;
+app.get("/api/code/:hash", validateHashParam, async (req, res) => {
+  const file = req.query.file;
+  if (!file || !isValidFilePath(file)) {
+    return res.status(400).json({ error: 'Invalid file path parameter' });
+  }
   const hash = req.params.hash;
-
-  if (!file) return res.status(400).json({ error: "File required" });
 
   console.log(`[CODE VIEW] 📂 Fetching: ${file}`);
   console.log(`[CODE VIEW] 🔑 Hash: ${hash}`);
@@ -2031,44 +2117,62 @@ app.get("/api/code/:hash", async (req, res) => {
 
 // ================== 🤖 AI FIX SUGGESTIONS ==================
 app.post("/api/ai/fix-suggestion", async (req, res) => {
-  const { title, description, code_snippet } = req.body;
+  const rawTitle = req.body.title || '';
+  const rawDescription = req.body.description || '';
+  const rawCodeSnippet = req.body.code_snippet || '';
 
-  if (!title || !description) {
-    return res.status(400).json({ error: "Vulnerability title and description are required" });
+  const title = sanitizeTextForOutput(rawTitle, 200);
+  const description = sanitizeTextForOutput(rawDescription, 2000);
+  const code_snippet = sanitizeTextForOutput(rawCodeSnippet, 3000);
+
+  if (!title) {
+    return res.status(400).json({ error: 'Title is required' });
   }
+
+  // Strip common prompt injection patterns from inputs going to LLM
+  const stripInjection = (s) => s
+    .replace(/ignore\s+(all\s+)?previous\s+(instructions|prompts)/gi, '')
+    .replace(/disregard\s+.{0,30}\s*(instructions|prompts|rules)/gi, '')
+    .replace(/system\s*:?\s*prompt/gi, '')
+    .replace(/\\n\\n(human|assistant|system):/gi, '');
+
+  const safeTitle = stripInjection(title);
+  const safeDescription = stripInjection(description);
+  const safeCode = code_snippet;
 
   // Create a unique hash for caching
   const vulnHash = crypto.createHash('md5')
-    .update(`${title}|${description}|${code_snippet || ''}`)
+    .update(`${safeTitle}|${safeDescription}|${safeCode || ''}`)
     .digest('hex');
 
   try {
     // Check cache first
     const cachedFix = await AIFixCache.findOne({ vuln_hash: vulnHash });
     if (cachedFix) {
-      console.log(`[AI] Cache hit for: ${title}`);
+      console.log(`[AI] Cache hit for: ${safeTitle}`);
       return res.json(cachedFix);
     }
 
     // IF NO GROQ KEY, RETURN MOCK DATA FOR UI DEMO
     if (!process.env.GROQ_API_KEY) {
-      console.log(`[AI] Mocking fix for: ${title} (No API Key)`);
+      console.log(`[AI] Mocking fix for: ${safeTitle} (No API Key)`);
       const mockResult = {
         vuln_hash: vulnHash,
-        explanation: `[MOCK] The vulnerability "${title}" occurs when user-controlled data is handled unsafely. In this case, "${description}" indicates a potential security risk in the mobile environment.`,
-        fix: `1. Identify the location of the report: ${title}.\n2. Sanitize and validate all inputs.\n3. Use platform-recommended secure APIs instead of raw or insecure alternatives.\n4. Apply principle of least privilege to the affected component.`,
-        secure_code: `// MOCK SECURE IMPLEMENTATION\npublic void secureMethod() {\n    // Implementation for: ${title}\n    String safeData = sanitize(userInput);\n    processSecurely(safeData);\n}`
+        explanation: `[MOCK] The vulnerability "${safeTitle}" occurs when user-controlled data is handled unsafely. In this case, "${safeDescription}" indicates a potential security risk in the mobile environment.`,
+        fix: `1. Identify the location of the report: ${safeTitle}.\n2. Sanitize and validate all inputs.\n3. Use platform-recommended secure APIs instead of raw or insecure alternatives.\n4. Apply principle of least privilege to the affected component.`,
+        secure_code: `// MOCK SECURE IMPLEMENTATION\npublic void secureMethod() {\n    // Implementation for: ${safeTitle}\n    String safeData = sanitize(userInput);\n    processSecurely(safeData);\n}`
       };
       // We don't save mock data to cache to avoid polluting it
       return res.json(mockResult);
     }
 
-    console.log(`[AI] Generating real fix for: ${title}...`);
+    console.log(`[AI] Generating real fix for: ${safeTitle}...`);
 
     const prompt = `You are an Android security expert. Return ONLY a JSON object with no extra text.
 
-Vulnerability: ${title}
-Description: ${description}
+Vulnerability: ${safeTitle}
+Description: ${safeDescription}
+Code Snippet: ${safeCode}
 
 Return this exact JSON:
 {"explanation":"Why this is dangerous in 2 sentences","fix":"1. First fix step\\n2. Second fix step\\n3. Third fix step","secure_code":"// Secure implementation example\\npublic void secureMethod() {\\n    // Replace vulnerable code here\\n}"}`;
@@ -2104,6 +2208,10 @@ Return this exact JSON:
         secure_code: "// See risk explanation for remediation guidance"
       };
     }
+
+    if (aiResult.explanation) aiResult.explanation = sanitizeTextForOutput(String(aiResult.explanation), 5000);
+    if (aiResult.fix) aiResult.fix = sanitizeTextForOutput(String(aiResult.fix), 5000);
+    if (aiResult.secure_code) aiResult.secure_code = sanitizeTextForOutput(String(aiResult.secure_code), 10000);
 
     // Store in cache
     const newFix = await AIFixCache.create({
@@ -2170,7 +2278,7 @@ function mapToMitreAndCve(findings) {
   return results.sort((a, b) => b.cvss_score - a.cvss_score);
 }
 
-app.get("/api/mitre-cve/:hash", authenticateJWT, async (req, res) => {
+app.get("/api/mitre-cve/:hash", authenticateJWT, validateHashParam, async (req, res) => {
   console.log('[MITRE] Fetching for hash:', req.params.hash);
   try {
     const reportFromDb = await ScanReport.findOne({ hash: req.params.hash, user_id: req.user?.id });
@@ -2338,7 +2446,7 @@ const checkAdbDevices = () => {
   });
 };
 
-app.get("/api/analyze/dynamic/:hash/status", async (req, res) => {
+app.get("/api/analyze/dynamic/:hash/status", validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -2351,7 +2459,7 @@ app.get("/api/analyze/dynamic/:hash/status", async (req, res) => {
   }
 });
 
-app.post("/api/analyze/dynamic/:hash/reset", authenticateJWT, async (req, res) => {
+app.post("/api/analyze/dynamic/:hash/reset", authenticateJWT, validateHashParam, async (req, res) => {
   try {
     const report = await ScanReport.findOne({ hash: req.params.hash });
     if (!report) return res.status(404).json({ error: "Report not found" });
@@ -2364,7 +2472,7 @@ app.post("/api/analyze/dynamic/:hash/reset", authenticateJWT, async (req, res) =
   }
 });
 
-app.post("/api/analyze/dynamic/:hash", async (req, res) => {
+app.post("/api/analyze/dynamic/:hash", validateHashParam, async (req, res) => {
   const hash = req.params.hash;
 
   try {
