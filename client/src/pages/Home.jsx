@@ -1,4 +1,5 @@
-import { motion } from "framer-motion";
+import { useState } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { 
   ArrowRight, 
   Cpu, 
@@ -8,9 +9,12 @@ import {
   Target,
   Gift
 } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 
 function Home() {
+  const navigate = useNavigate();
+  const [selectedFeature, setSelectedFeature] = useState(null);
+
   // 20 Floating particles
   const particles = Array.from({ length: 20 });
 
@@ -193,35 +197,65 @@ function Home() {
           }}>
             {[
               {
-                icon: "🔍",
-                title: "Static Analysis",
-                desc: "Decompile and scan APK source code, AndroidManifest files, sensitive resources, certificates, and hardcoded signatures."
+                icon: '🔍',
+                title: 'Static Analysis',
+                desc: 'Decompile and scan APK source code, AndroidManifest files, sensitive resources, certificates, and hardcoded signatures.',
+                detail: {
+                  what: 'Static Analysis examines your APK without running it. We decompile the app using industry-standard tools and scan every file.',
+                  how: 'Our engine extracts AndroidManifest.xml, scans for hardcoded secrets, checks certificate validity, analyzes permissions, and maps findings to OWASP Mobile Top 10.',
+                  finds: ['Hardcoded API keys & passwords', 'Insecure permissions', 'Weak cryptography', 'Debuggable builds', 'Certificate issues', 'Insecure data storage'],
+                }
               },
               {
-                icon: "⚡",
-                title: "Dynamic Analysis",
-                desc: "Monitor runtime environment behaviors, memory allocations, IPC calls, dynamic network payloads, and sandbox processes."
+                icon: '⚡',
+                title: 'Dynamic Analysis',
+                desc: 'Monitor runtime environment behaviors, memory allocations, IPC calls, dynamic network payloads, and sandbox processes.',
+                detail: {
+                  what: 'Dynamic Analysis runs your APK in a real Android emulator and monitors everything that happens at runtime.',
+                  how: 'We connect to a GenyMotion Android emulator, install your app, hook into system calls using Frida, and capture network traffic, file operations, and API calls.',
+                  finds: ['Network traffic & API calls', 'Runtime permission usage', 'File system access', 'Suspicious background processes', 'Data leakage', 'Insecure network connections'],
+                }
               },
               {
-                icon: "🦠",
-                title: "Threat Intelligence",
-                desc: "Cross-reference binary checksum hashes against the global VirusTotal engine checking database across 68+ distinct AV suppliers."
+                icon: '🦠',
+                title: 'Threat Intelligence',
+                desc: 'Cross-reference binary checksum hashes against the global VirusTotal engine checking database across 68+ distinct AV suppliers.',
+                detail: {
+                  what: 'We check your APK against VirusTotal\'s database of 68+ antivirus engines to detect known malware signatures.',
+                  how: 'Your APK\'s SHA256 hash is computed and checked against VirusTotal\'s database. If flagged, we show exactly which engines detected it and what threat was found.',
+                  finds: ['Known malware families', 'Banking trojans', 'Spyware signatures', 'Adware patterns', 'Ransomware indicators', 'Threat classification labels'],
+                }
               },
               {
-                icon: "🤖",
-                title: "AI Fix Suggestions",
-                desc: "Generate prompt-driven, robust vulnerability remediation suggestions and code snippet replacements with our built-in GPT assistant."
+                icon: '🤖',
+                title: 'AI Fix Suggestions',
+                desc: 'Generate prompt-driven, robust vulnerability remediation suggestions and code snippet replacements with our built-in GPT assistant.',
+                detail: {
+                  what: 'Our AI engine powered by Groq (llama-3.1) analyzes each vulnerability and generates specific, actionable fix suggestions with code examples.',
+                  how: 'Each finding is sent to our AI engine with full context. The AI returns step-by-step remediation guidance, secure code snippets, and explanation of why the issue is dangerous.',
+                  finds: ['Secure code replacements', 'Step-by-step fix guides', 'Vulnerable vs fixed code diff', 'Security best practices', 'Framework-specific fixes', 'OWASP remediation guidance'],
+                }
               },
               {
-                icon: "🗺️",
-                title: "MITRE ATT&CK Mapping",
-                desc: "Directly contextualize discovered application flaws against standardized mobile threat catalogs and attacker playbooks."
+                icon: '🗺️',
+                title: 'MITRE ATT&CK Mapping',
+                desc: 'Directly contextualize discovered application flaws against standardized mobile threat catalogs and attacker playbooks.',
+                detail: {
+                  what: 'Every vulnerability found is mapped to MITRE ATT&CK for Mobile framework — the industry standard for categorizing attack techniques.',
+                  how: 'Our mapping engine matches vulnerability patterns to MITRE techniques, assigns CVE numbers with CVSS scores, and provides remediation guidance aligned with industry standards.',
+                  finds: ['MITRE technique IDs (T1xxx)', 'CVE numbers with CVSS scores', 'Attack tactic categories', 'Real-world exploit examples', 'CWE weakness mappings', 'OWASP Mobile Top 10 mapping'],
+                }
               },
               {
-                icon: "📄",
-                title: "Professional Reports",
-                desc: "Instantly compile and export publication-ready reports (available as pristine PDF downloads, robust JSON files, or CSV models)."
-              }
+                icon: '📄',
+                title: 'Professional Reports',
+                desc: 'Instantly compile and export publication-ready reports available as pristine PDF downloads, robust JSON files, or CSV models.',
+                detail: {
+                  what: 'Generate comprehensive, professional security reports ready to share with clients, developers, or management.',
+                  how: 'Our report engine compiles all findings, risk scores, VirusTotal results, privacy analysis, and MITRE mappings into a beautifully formatted multi-page PDF.',
+                  finds: ['Multi-page PDF with cover page', 'Risk score & severity breakdown', 'VirusTotal results page', 'Privacy & malware analysis', 'JSON export for CI/CD', 'CSV for spreadsheet analysis'],
+                }
+              },
             ].map((feat, i) => (
               <motion.div
                 key={i}
@@ -231,7 +265,8 @@ function Home() {
                 transition={{ delay: i * 0.08, duration: 0.5 }}
                 whileHover={{ y: -5, borderColor: 'rgba(225, 29, 72, 0.5)' }}
                 className="bg-[#0d0d14] border-l-4 border-l-[#E11D48] border-y border-r border-white/5 p-8 rounded-2xl transition-all duration-300 shadow-lg flex flex-col justify-between"
-                style={{ minHeight: 'auto' }}
+                style={{ minHeight: 'auto', cursor: 'pointer' }}
+                onClick={() => setSelectedFeature(feat)}
               >
                 <div className="space-y-4">
                   <span className="text-3xl block mb-2">{feat.icon}</span>
@@ -304,6 +339,103 @@ function Home() {
           </p>
         </div>
       </footer>
+
+      {/* Feature Details Modal */}
+      <AnimatePresence>
+        {selectedFeature && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedFeature(null)}
+            style={{
+              position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+              background: 'rgba(0,0,0,0.85)',
+              zIndex: 1000,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '20px',
+              backdropFilter: 'blur(8px)',
+            }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.9, y: 20 }}
+              onClick={e => e.stopPropagation()}
+              style={{
+                background: '#0d0d14',
+                border: '1px solid rgba(225,29,72,0.3)',
+                borderRadius: '20px',
+                padding: '40px',
+                maxWidth: '600px',
+                width: '100%',
+                maxHeight: '80vh',
+                overflowY: 'auto',
+              }}
+            >
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <span style={{ fontSize: '32px' }}>{selectedFeature.icon}</span>
+                  <h2 style={{ color: '#fff', fontSize: '22px', fontWeight: '800', margin: 0 }}>{selectedFeature.title}</h2>
+                </div>
+                <button onClick={() => setSelectedFeature(null)}
+                  style={{ background: 'rgba(255,255,255,0.1)', border: 'none', color: '#fff', width: '32px', height: '32px', borderRadius: '50%', cursor: 'pointer', fontSize: '16px' }}>
+                  ✕
+                </button>
+              </div>
+
+              {/* What is it */}
+              <div style={{ marginBottom: '20px' }}>
+                <p style={{ color: '#E11D48', fontSize: '11px', fontWeight: '700', letterSpacing: '2px', marginBottom: '8px' }}>WHAT IS IT?</p>
+                <p style={{ color: '#cccccc', fontSize: '14px', lineHeight: '1.7', margin: 0 }}>{selectedFeature.detail.what}</p>
+              </div>
+
+              {/* How it works */}
+              <div style={{ marginBottom: '20px' }}>
+                <p style={{ color: '#E11D48', fontSize: '11px', fontWeight: '700', letterSpacing: '2px', marginBottom: '8px' }}>HOW IT WORKS</p>
+                <p style={{ color: '#cccccc', fontSize: '14px', lineHeight: '1.7', margin: 0 }}>{selectedFeature.detail.how}</p>
+              </div>
+
+              {/* What it finds */}
+              <div>
+                <p style={{ color: '#E11D48', fontSize: '11px', fontWeight: '700', letterSpacing: '2px', marginBottom: '12px' }}>WHAT IT FINDS</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  {selectedFeature.detail.finds.map((item, i) => (
+                    <div key={i} style={{
+                      display: 'flex', alignItems: 'center', gap: '8px',
+                      background: 'rgba(225,29,72,0.08)',
+                      border: '1px solid rgba(225,29,72,0.15)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                    }}>
+                      <span style={{ color: '#E11D48', fontSize: '12px' }}>✓</span>
+                      <span style={{ color: '#ccc', fontSize: '12px' }}>{item}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* CTA */}
+              <button
+                onClick={() => { setSelectedFeature(null); navigate('/dashboard'); }}
+                style={{
+                  marginTop: '28px', width: '100%',
+                  background: 'linear-gradient(135deg, #E11D48, #ff4d6d)',
+                  border: 'none', color: '#fff',
+                  padding: '14px', borderRadius: '10px',
+                  fontSize: '13px', fontWeight: '700',
+                  letterSpacing: '1px', cursor: 'pointer',
+                }}
+              >
+                START SCANNING NOW →
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </div>
   );
