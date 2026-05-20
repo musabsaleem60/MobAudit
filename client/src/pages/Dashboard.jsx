@@ -152,9 +152,9 @@ function Dashboard() {
 
   return (
     <div className="min-h-screen bg-[#050508] text-white font-sans overflow-x-hidden pb-16 selection:bg-[#E11D48]/30 selection:text-white relative">
-      {/* Hide the global navbar locally to avoid duplicate headers */}
+      {/* Hide the global navbar and its spacer div locally to avoid duplicate headers and top gaps */}
       <style>{`
-        nav { display: none !important; }
+        nav, .h-\\[72px\\] { display: none !important; }
         @keyframes pulseGlow {
           0%, 100% { box-shadow: 0 0 15px rgba(225,29,72,0.3); }
           50% { box-shadow: 0 0 30px rgba(225,29,72,0.7); }
